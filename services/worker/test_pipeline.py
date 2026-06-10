@@ -30,6 +30,8 @@ from pipeline.team_classifier import TeamClassifier
 from pipeline.tracker import PlayerTracker
 from pipeline.homography import HomographyMapper
 from pipeline import physics
+from pipeline.interpolation import interpolate_gaps, contar_gaps
+from pipeline.video_writer import AnnotatedVideoWriter, Anotacao
 
 # Configuração de logging para vermos as mensagens do pipeline no terminal.
 logging.basicConfig(
@@ -297,6 +299,137 @@ def testar_fisica(frames, classifier: TeamClassifier, fps: float):
         )
 
 
+def _carregar_calibracao(mapper: HomographyMapper, caminho_video: str) -> bool:
+    """Tenta carregar uma calibração salva para este vídeo (modo misto).
+
+    Se existir data/models/calibration_<nome>.json, usa o modo CALIBRADO
+    (preciso). Caso contrário, o mapper fica em modo APROXIMADO (fallback).
+
+    Returns:
+        True se carregou calibração, False se ficará em fallback.
+    """
+    nome = os.path.splitext(os.path.basename(caminho_video))[0]
+    cal = os.path.join("..", "..", "data", "models", f"calibration_{nome}.json")
+    if os.path.exists(cal) and mapper.load_calibration(cal):
+        logger.info("Modo CALIBRADO (preciso) — usando %s.", cal)
+        return True
+    logger.info("Modo APROXIMADO (fallback) — sem calibração para este vídeo.")
+    return False
+
+
+def testar_pipeline_completo(caminho: str, n_frames: int = 300):
+    """Pipeline completo de ponta a ponta -> gera o vídeo anotado oficial.
+
+    Etapas: detecção -> rastreamento -> classificação de time -> física ->
+    interpolação de gaps -> renderização do vídeo anotado.
+
+    Args:
+        caminho: caminho do vídeo de entrada.
+        n_frames: quantos frames processar (limite para manter o teste ágil).
+    """
+    logger.info("==================================================")
+    logger.info("FASE 5 — PIPELINE COMPLETO (vídeo anotado)")
+    logger.info("==================================================")
+
+    fps = obter_fps(caminho)
+    frames = ler_frames_para_lista(caminho, n_frames)
+    if not frames:
+        logger.error("Nenhum frame lido — abortando pipeline completo.")
+        return
+    altura, largura = frames[0].shape[:2]
+    n = len(frames)
+    logger.info("%d frames (%dx%d @ %.2ffps).", n, largura, altura, fps)
+
+    # --- Calibração de time (usa os primeiros frames) ---
+    detector = YOLODetector()
+    classifier = TeamClassifier()
+    crops = []
+    for fr in frames[:10]:
+        for det in detector.detect(fr):
+            if det.class_name == "person":
+                x1, y1, x2, y2 = det.bbox
+                c = fr[y1:y2, x1:x2]
+                if c.size > 0:
+                    crops.append(c)
+    classifier.fit(crops)
+
+    # --- Homografia (modo misto: calibrado se houver arquivo, senão fallback) ---
+    mapper = HomographyMapper()
+    mapper.set_frame_size(largura, altura)
+    _carregar_calibracao(mapper, caminho)
+
+    # --- Passo 1: rastrear todos os frames, guardando bbox/time/posição ---
+    tracker = PlayerTracker(use_reid=False)
+    frames_tracks = []            # frames_tracks[i] = lista de Track do frame i
+    bbox_por_id = {}              # {id: {frame_i: bbox}}
+    pos_por_id = {}               # {id: [pos_m ou None] por frame}
+    team_por_id = {}              # {id: time}
+
+    for i, fr in enumerate(frames):
+        tracks = tracker.update(fr, team_classifier=classifier)
+        frames_tracks.append(tracks)
+        ids_no_frame = set()
+        for t in tracks:
+            ids_no_frame.add(t.id)
+            bbox_por_id.setdefault(t.id, {})[i] = t.bbox
+            team_por_id[t.id] = t.team
+            x1, y1, x2, y2 = t.bbox
+            pos_m = mapper.pixel_to_meters((x1 + x2) / 2.0, float(y2))
+            pos_por_id.setdefault(t.id, [None] * n)
+            pos_por_id[t.id][i] = pos_m
+
+    logger.info("Rastreamento concluído: %d jogadores únicos.", len(pos_por_id))
+
+    # --- Passo 2: interpolar gaps das trajetórias (melhora física/heatmap) ---
+    dt = 1.0 / fps
+    speed_por_id = {}  # {id: [v_kmh ou None] por frame}
+    total_gaps = 0
+    for pid, traj in pos_por_id.items():
+        ngaps, _ = contar_gaps(traj)
+        total_gaps += ngaps
+        traj_interp = interpolate_gaps(traj, max_gap=45)
+        pos_por_id[pid] = traj_interp
+
+        # Velocidade por frame a partir da trajetória interpolada.
+        speeds = [None] * n
+        anterior = None
+        for i, p in enumerate(traj_interp):
+            if p is not None and anterior is not None:
+                speeds[i] = physics.calculate_speed(anterior, p, dt)
+            anterior = p if p is not None else anterior
+        speed_por_id[pid] = speeds
+    logger.info("Interpolação concluída (%d gaps detectados no total).", total_gaps)
+
+    # --- Passo 3: renderizar o vídeo anotado ---
+    destino = os.path.join("..", "..", "data", "outputs", "test_output.mp4")
+    with AnnotatedVideoWriter(destino, fps, (largura, altura)) as writer:
+        for i, fr in enumerate(frames):
+            anotacoes = []
+            for t in frames_tracks[i]:
+                v = speed_por_id.get(t.id, [None] * n)[i]
+                anotacoes.append(
+                    Anotacao(track_id=t.id, bbox=t.bbox, team=t.team, speed=v)
+                )
+            writer.write_frame(fr, anotacoes, timestamp=i / fps)
+
+    # --- Resumo final por jogador ---
+    logger.info("---------- RESUMO FINAL DO PIPELINE ----------")
+    logger.info("Vídeo anotado salvo em: %s", destino)
+    logger.info("Jogadores detectados: %d", len(pos_por_id))
+    vmax_global = 0.0
+    for pid in sorted(pos_por_id.keys()):
+        dist = physics.calculate_total_distance(pos_por_id[pid])
+        vels = [v for v in speed_por_id[pid] if v is not None]
+        vmax = max(vels) if vels else 0.0
+        vmax_global = max(vmax_global, vmax)
+        sprints = physics.calculate_sprint_count(vels)
+        logger.info(
+            "Jogador #%d (time %s): distância=%.1fm | v_máx=%.1f km/h | sprints=%d",
+            pid, team_por_id.get(pid, "?"), dist, vmax, sprints,
+        )
+    logger.info("Velocidade máxima global: %.1f km/h", vmax_global)
+
+
 def testar_com_video(caminho: str):
     """Roda detecção + classificação de times em um vídeo real."""
     logger.info("=== MODO VÍDEO: %s ===", caminho)
@@ -405,7 +538,13 @@ def testar_sintetico():
 
 
 def main():
-    """Ponto de entrada do teste."""
+    """Ponto de entrada do teste.
+
+    Variáveis de ambiente úteis:
+        PIPELINE_ONLY=1  -> roda apenas a Fase 5 (pipeline completo + vídeo),
+                            pulando os testes detalhados das Fases 2-4.
+        TEST_FRAMES=N    -> número de frames a processar no pipeline (padrão 300).
+    """
     caminho = None
     if len(sys.argv) > 1:
         caminho = sys.argv[1]
@@ -413,7 +552,15 @@ def main():
         caminho = os.getenv("TEST_VIDEO")
 
     if caminho and os.path.exists(caminho):
-        testar_com_video(caminho)
+        if os.getenv("PIPELINE_ONLY") == "1":
+            # Modo rápido para iterar no vídeo final.
+            n = int(os.getenv("TEST_FRAMES", "300"))
+            testar_pipeline_completo(caminho, n_frames=n)
+        else:
+            # Roda Fases 2-4 (detalhado) e depois o pipeline completo (Fase 5).
+            testar_com_video(caminho)
+            n = int(os.getenv("TEST_FRAMES", "300"))
+            testar_pipeline_completo(caminho, n_frames=n)
     else:
         if caminho:
             logger.error("Vídeo não encontrado: %s — caindo no modo sintético.", caminho)
