@@ -28,6 +28,8 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from pipeline.detector import YOLODetector
 from pipeline.team_classifier import TeamClassifier
 from pipeline.tracker import PlayerTracker
+from pipeline.homography import HomographyMapper
+from pipeline import physics
 
 # Configuração de logging para vermos as mensagens do pipeline no terminal.
 logging.basicConfig(
@@ -200,6 +202,101 @@ def testar_rastreamento(frames, use_reid: bool, classifier: TeamClassifier):
     return metricas
 
 
+def obter_fps(caminho: str) -> float:
+    """Lê a taxa de quadros (fps) do vídeo. Usa 25.0 como padrão se falhar."""
+    cap = cv2.VideoCapture(caminho)
+    fps = cap.get(cv2.CAP_PROP_FPS) if cap.isOpened() else 0.0
+    cap.release()
+    return fps if fps and fps > 0 else 25.0
+
+
+def testar_fisica(frames, classifier: TeamClassifier, fps: float):
+    """Roda detecção + rastreamento + física e imprime velocidades/distâncias.
+
+    Para cada jogador rastreado, usamos o ponto dos PÉS (centro inferior da
+    caixa) como sua posição no campo, convertemos para metros (homografia em
+    modo fallback, pois não há calibração no teste) e calculamos velocidade
+    instantânea e distância total.
+
+    Args:
+        frames: lista de frames (BGR).
+        classifier: TeamClassifier já calibrado.
+        fps: quadros por segundo do vídeo (define o dt entre frames).
+    """
+    logger.info("==================================================")
+    logger.info("FASE 4 — FÍSICA (velocidade/distância) em %d frames", len(frames))
+    logger.info("==================================================")
+
+    tracker = PlayerTracker(use_reid=False)
+    mapper = HomographyMapper()
+    if frames:
+        h, w = frames[0].shape[:2]
+        mapper.set_frame_size(w, h)
+
+    # dt (segundos entre frames consecutivos) = 1 / fps.
+    dt = 1.0 / fps
+    logger.info("fps=%.2f -> dt=%.4fs entre frames.", fps, dt)
+
+    # Estruturas por jogador (track_id).
+    posicoes = {}        # {id: [(x_m, y_m), ...]} histórico de posições
+    ultima_pos = {}      # {id: (x_m, y_m)} última posição conhecida
+    velocidades = {}     # {id: [v_kmh, ...]} histórico de velocidades
+    times = {}           # {id: "A"/"B"/...}
+
+    for i, frame in enumerate(frames):
+        tracks = tracker.update(frame, team_classifier=classifier)
+        linha = []
+        for t in tracks:
+            x1, y1, x2, y2 = t.bbox
+            # Posição dos pés: centro horizontal, base da caixa.
+            pe_x = (x1 + x2) / 2.0
+            pe_y = float(y2)
+            pos_m = mapper.pixel_to_meters(pe_x, pe_y)
+
+            times[t.id] = t.team
+            posicoes.setdefault(t.id, []).append(pos_m)
+
+            # Velocidade instantânea em relação ao frame anterior.
+            v = 0.0
+            if t.id in ultima_pos:
+                v = physics.calculate_speed(ultima_pos[t.id], pos_m, dt)
+            velocidades.setdefault(t.id, []).append(v)
+            ultima_pos[t.id] = pos_m
+
+            linha.append(f"#{t.id}={v:4.1f}")
+
+        # Velocidade instantânea de cada jogador neste frame (km/h).
+        logger.info("Frame %d | velocidades(km/h): %s", i, "  ".join(linha))
+
+    # ----- Resumo por jogador ao final -----
+    logger.info("---------- RESUMO POR JOGADOR ----------")
+    for pid in sorted(posicoes.keys()):
+        dist = physics.calculate_total_distance(posicoes[pid])
+        vmax = max(velocidades[pid]) if velocidades[pid] else 0.0
+        vmed = (sum(velocidades[pid]) / len(velocidades[pid])) if velocidades[pid] else 0.0
+        sprints = physics.calculate_sprint_count(velocidades[pid])
+        logger.info(
+            "Jogador #%d (time %s): distância=%.1fm | v_máx=%.1f km/h | v_méd=%.1f km/h | sprints=%d",
+            pid,
+            times.get(pid, "?"),
+            dist,
+            vmax,
+            vmed,
+            sprints,
+        )
+
+    # Demonstra a geração de heatmap para um jogador (o primeiro).
+    if posicoes:
+        primeiro = sorted(posicoes.keys())[0]
+        hm = physics.generate_heatmap(posicoes[primeiro])
+        logger.info(
+            "Heatmap do jogador #%d gerado: matriz %s, densidade máx=%.2f.",
+            primeiro,
+            hm.shape,
+            float(hm.max()),
+        )
+
+
 def testar_com_video(caminho: str):
     """Roda detecção + classificação de times em um vídeo real."""
     logger.info("=== MODO VÍDEO: %s ===", caminho)
@@ -269,6 +366,10 @@ def testar_com_video(caminho: str):
     logger.info(
         "Menos 'IDs novos após início' = melhor continuidade (menos trocas de ID)."
     )
+
+    # ===== FASE 4: física (velocidade, distância, sprints, heatmap) =====
+    fps = obter_fps(caminho)
+    testar_fisica(frames, classifier, fps)
 
 
 def testar_sintetico():
