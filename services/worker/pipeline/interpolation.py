@@ -12,6 +12,7 @@ saiu do campo/quadro), mantemos None, pois "chutar" a posição seria impreciso.
 """
 
 import logging
+import math
 from typing import List, Optional, Tuple
 
 logger = logging.getLogger(__name__)
@@ -85,6 +86,57 @@ def _preencher_linear(
         x = x0 + (x1 - x0) * t
         y = y0 + (y1 - y0) * t
         trajetoria[inicio + k] = (x, y)
+
+
+def reject_outliers(
+    trajectory: List[Posicao], dt: float, max_speed_kmh: float = 40.0
+) -> List[Posicao]:
+    """Remove posições que implicam velocidades fisicamente impossíveis.
+
+    Saltos enormes entre frames vêm de erros de rastreamento, cortes de câmera
+    ou trocas de ID. Se ir de uma posição à seguinte exigiria correr acima de
+    `max_speed_kmh` (recorde humano ~37 km/h), tratamos a nova posição como
+    inválida (None) — vira um gap, que a interpolação pode preencher depois.
+
+    Args:
+        trajectory: lista de posições (x, y) em metros, com possíveis None.
+        dt: intervalo de tempo entre frames (segundos).
+        max_speed_kmh: teto físico de velocidade (km/h).
+
+    Returns:
+        Trajetória com os outliers removidos (substituídos por None).
+    """
+    if dt <= 0:
+        return list(trajectory)
+
+    # Distância máxima plausível entre dois frames consecutivos (metros).
+    max_dist = (max_speed_kmh / 3.6) * dt
+
+    resultado: List[Posicao] = list(trajectory)
+    ultima_valida: Posicao = None
+    frames_desde_ultima = 0
+
+    for i, pos in enumerate(resultado):
+        if pos is None:
+            frames_desde_ultima += 1
+            continue
+        if ultima_valida is None:
+            ultima_valida = pos
+            frames_desde_ultima = 0
+            continue
+
+        # Distância permitida cresce com o nº de frames desde a última válida.
+        limite = max_dist * (frames_desde_ultima + 1)
+        d = math.hypot(pos[0] - ultima_valida[0], pos[1] - ultima_valida[1])
+        if d > limite:
+            # Salto impossível: descarta esta posição.
+            resultado[i] = None
+            frames_desde_ultima += 1
+        else:
+            ultima_valida = pos
+            frames_desde_ultima = 0
+
+    return resultado
 
 
 def smooth_trajectory(

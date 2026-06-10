@@ -30,8 +30,14 @@ from pipeline.team_classifier import TeamClassifier
 from pipeline.tracker import PlayerTracker
 from pipeline.homography import HomographyMapper
 from pipeline import physics
-from pipeline.interpolation import interpolate_gaps, smooth_trajectory, contar_gaps
+from pipeline.interpolation import (
+    interpolate_gaps,
+    smooth_trajectory,
+    reject_outliers,
+    contar_gaps,
+)
 from pipeline.video_writer import AnnotatedVideoWriter, Anotacao
+from pipeline.camera_motion import CameraMotionCompensator
 
 # Configuração de logging para vermos as mensagens do pipeline no terminal.
 logging.basicConfig(
@@ -140,8 +146,10 @@ def ler_frames_para_lista(caminho: str, n: int):
     if not cap.isOpened():
         raise IOError(f"Não foi possível abrir o vídeo: {caminho}")
     frames = []
+    # n <= 0 significa "ler o vídeo inteiro".
+    ler_tudo = n <= 0
     try:
-        for _ in range(n):
+        while ler_tudo or len(frames) < n:
             ok, frame = cap.read()
             if not ok:
                 break
@@ -356,51 +364,76 @@ def testar_pipeline_completo(caminho: str, n_frames: int = 300):
     # --- Homografia (modo misto: calibrado se houver arquivo, senão fallback) ---
     mapper = HomographyMapper()
     mapper.set_frame_size(largura, altura)
-    _carregar_calibracao(mapper, caminho)
+    calibrado = _carregar_calibracao(mapper, caminho)
+
+    # Compensação de movimento de câmera: ligada no modo aproximado (câmera
+    # móvel/ao vivo). No modo calibrado (câmera fixa) não é necessária.
+    usar_comp = not calibrado
+    comp = CameraMotionCompensator() if usar_comp else None
+    if comp is not None:
+        comp.reset(frames[0])
+        logger.info("Compensação de movimento de câmera: LIGADA.")
+    else:
+        logger.info("Compensação de movimento de câmera: DESLIGADA (modo calibrado).")
 
     # --- Passo 1: rastrear todos os frames, guardando bbox/time/posição ---
     tracker = PlayerTracker(use_reid=False)
     frames_tracks = []            # frames_tracks[i] = lista de Track do frame i
-    bbox_por_id = {}              # {id: {frame_i: bbox}}
     pos_por_id = {}               # {id: [pos_m ou None] por frame}
     team_por_id = {}              # {id: time}
+    frames_vistos = {}            # {id: nº de frames em que apareceu}
 
     for i, fr in enumerate(frames):
         tracks = tracker.update(fr, team_classifier=classifier)
         frames_tracks.append(tracks)
-        ids_no_frame = set()
+
+        # Estima o movimento da câmera deste frame (ignorando os jogadores).
+        if comp is not None:
+            comp.update(fr, exclude_boxes=[t.bbox for t in tracks])
+
         for t in tracks:
-            ids_no_frame.add(t.id)
-            bbox_por_id.setdefault(t.id, {})[i] = t.bbox
             team_por_id[t.id] = t.team
+            frames_vistos[t.id] = frames_vistos.get(t.id, 0) + 1
             x1, y1, x2, y2 = t.bbox
-            pos_m = mapper.pixel_to_meters((x1 + x2) / 2.0, float(y2))
+            pe_x, pe_y = (x1 + x2) / 2.0, float(y2)
+            # Estabiliza o ponto dos pés para o frame de referência (descontando
+            # o movimento da câmera), depois converte para metros.
+            if comp is not None:
+                pe_x, pe_y = comp.transform_point(pe_x, pe_y)
+            pos_m = mapper.pixel_to_meters(pe_x, pe_y)
             pos_por_id.setdefault(t.id, [None] * n)
             pos_por_id[t.id][i] = pos_m
 
     logger.info("Rastreamento concluído: %d jogadores únicos.", len(pos_por_id))
 
-    # --- Passo 2: interpolar gaps das trajetórias (melhora física/heatmap) ---
+    # --- Passo 2: limpar trajetórias (outliers -> interpolar -> suavizar) ---
     dt = 1.0 / fps
     speed_por_id = {}  # {id: [v_kmh ou None] por frame}
     total_gaps = 0
     for pid, traj in pos_por_id.items():
+        # 1) Remove saltos fisicamente impossíveis (cortes / trocas de ID).
+        traj = reject_outliers(traj, dt, max_speed_kmh=40.0)
+        # 2) Preenche gaps curtos por interpolação linear.
         ngaps, _ = contar_gaps(traj)
         total_gaps += ngaps
-        traj_interp = interpolate_gaps(traj, max_gap=45)
-        # Suaviza a trajetória (média móvel) para reduzir tremor/ruído.
-        traj_interp = smooth_trajectory(traj_interp, window=5)
-        pos_por_id[pid] = traj_interp
+        traj = interpolate_gaps(traj, max_gap=45)
+        # 3) Suaviza (média móvel) para reduzir tremor/ruído.
+        traj = smooth_trajectory(traj, window=5)
+        pos_por_id[pid] = traj
 
-        # Velocidade por frame a partir da trajetória interpolada.
+        # Velocidade por frame a partir da trajetória limpa.
+        # Teto final de segurança: descarta velocidades acima do limite físico
+        # (~40 km/h), eliminando qualquer salto residual que tenha escapado.
+        TETO_KMH = 40.0
         speeds = [None] * n
         anterior = None
-        for i, p in enumerate(traj_interp):
+        for i, p in enumerate(traj):
             if p is not None and anterior is not None:
-                speeds[i] = physics.calculate_speed(anterior, p, dt)
+                v = physics.calculate_speed(anterior, p, dt)
+                speeds[i] = v if v <= TETO_KMH else None
             anterior = p if p is not None else anterior
         speed_por_id[pid] = speeds
-    logger.info("Interpolação concluída (%d gaps detectados no total).", total_gaps)
+    logger.info("Limpeza concluída (%d gaps tratados no total).", total_gaps)
 
     # --- Passo 3: renderizar o vídeo anotado ---
     destino = os.path.join("..", "..", "data", "outputs", "test_output.mp4")
@@ -414,22 +447,67 @@ def testar_pipeline_completo(caminho: str, n_frames: int = 300):
                 )
             writer.write_frame(fr, anotacoes, timestamp=i / fps)
 
-    # --- Resumo final por jogador ---
-    logger.info("---------- RESUMO FINAL DO PIPELINE ----------")
-    logger.info("Vídeo anotado salvo em: %s", destino)
-    logger.info("Jogadores detectados: %d", len(pos_por_id))
-    vmax_global = 0.0
+    # --- Resumo final: monta estatísticas, imprime tabela e salva CSV ---
+    estatisticas = []  # lista de dicts por jogador
     for pid in sorted(pos_por_id.keys()):
         dist = physics.calculate_total_distance(pos_por_id[pid])
         vels = [v for v in speed_por_id[pid] if v is not None]
         vmax = max(vels) if vels else 0.0
-        vmax_global = max(vmax_global, vmax)
+        vmed = (sum(vels) / len(vels)) if vels else 0.0
         sprints = physics.calculate_sprint_count(vels)
+        estatisticas.append({
+            "id": pid,
+            "time": team_por_id.get(pid, "?"),
+            "frames": frames_vistos.get(pid, 0),
+            "distancia_m": round(dist, 1),
+            "v_max_kmh": round(vmax, 1),
+            "v_med_kmh": round(vmed, 1),
+            "sprints": sprints,
+        })
+
+    _imprimir_tabela(estatisticas)
+
+    csv_path = os.path.join("..", "..", "data", "outputs", "stats.csv")
+    _salvar_csv(estatisticas, csv_path)
+
+    logger.info("Vídeo anotado salvo em: %s", destino)
+    logger.info("Tabela CSV salva em: %s", csv_path)
+    logger.info("Jogadores detectados: %d", len(estatisticas))
+    if estatisticas:
         logger.info(
-            "Jogador #%d (time %s): distância=%.1fm | v_máx=%.1f km/h | sprints=%d",
-            pid, team_por_id.get(pid, "?"), dist, vmax, sprints,
+            "Velocidade máxima global: %.1f km/h",
+            max(e["v_max_kmh"] for e in estatisticas),
         )
-    logger.info("Velocidade máxima global: %.1f km/h", vmax_global)
+
+
+def _imprimir_tabela(estatisticas):
+    """Imprime as estatísticas por jogador como tabela alinhada no log."""
+    logger.info("==================== TABELA DE ESTATÍSTICAS ====================")
+    cab = f"{'ID':>4} | {'Time':>10} | {'Frames':>6} | {'Dist(m)':>8} | {'Vmax':>6} | {'Vmed':>6} | {'Sprints':>7}"
+    logger.info(cab)
+    logger.info("-" * len(cab))
+    # Ordena por distância percorrida (mais ativos primeiro).
+    for e in sorted(estatisticas, key=lambda x: x["distancia_m"], reverse=True):
+        logger.info(
+            "%4d | %10s | %6d | %8.1f | %6.1f | %6.1f | %7d",
+            e["id"], e["time"], e["frames"], e["distancia_m"],
+            e["v_max_kmh"], e["v_med_kmh"], e["sprints"],
+        )
+
+
+def _salvar_csv(estatisticas, caminho):
+    """Salva as estatísticas em CSV (prévia do export oficial da Fase 8)."""
+    import csv
+
+    os.makedirs(os.path.dirname(caminho), exist_ok=True)
+    try:
+        with open(caminho, "w", newline="", encoding="utf-8") as f:
+            campos = ["id", "time", "frames", "distancia_m", "v_max_kmh", "v_med_kmh", "sprints"]
+            writer = csv.DictWriter(f, fieldnames=campos)
+            writer.writeheader()
+            writer.writerows(estatisticas)
+    except OSError as exc:
+        logger.error("Falha ao salvar CSV: %s", exc)
 
 
 def testar_com_video(caminho: str):
@@ -556,12 +634,12 @@ def main():
     if caminho and os.path.exists(caminho):
         if os.getenv("PIPELINE_ONLY") == "1":
             # Modo rápido para iterar no vídeo final.
-            n = int(os.getenv("TEST_FRAMES", "300"))
+            n = int(os.getenv("TEST_FRAMES", "0"))
             testar_pipeline_completo(caminho, n_frames=n)
         else:
             # Roda Fases 2-4 (detalhado) e depois o pipeline completo (Fase 5).
             testar_com_video(caminho)
-            n = int(os.getenv("TEST_FRAMES", "300"))
+            n = int(os.getenv("TEST_FRAMES", "0"))
             testar_pipeline_completo(caminho, n_frames=n)
     else:
         if caminho:
