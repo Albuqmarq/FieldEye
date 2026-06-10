@@ -11,13 +11,27 @@ para o plano do campo. Calibramos com 4+ pontos de referência conhecidos
 (cantos da área, interseções de linhas) e suas posições reais no campo.
 """
 
+import json
 import logging
+import os
 from typing import List, Optional, Tuple
 
 import cv2
 import numpy as np
 
 logger = logging.getLogger(__name__)
+
+# Coordenadas reais (em metros) dos 4 cantos da GRANDE ÁREA esquerda,
+# no sistema de coordenadas do campo (origem no canto inferior-esquerdo,
+# X = comprimento 0..105, Y = largura 0..68). Servem de modelo padrão de
+# calibração porque a grande área costuma estar bem visível e tem medidas
+# oficiais fixas (largura 40.32m -> de 13.84 a 54.16; profundidade 16.5m).
+GRANDE_AREA_ESQUERDA = [
+    (0.0, 13.84),    # canto da área na linha de fundo (lado inferior)
+    (0.0, 54.16),    # canto da área na linha de fundo (lado superior)
+    (16.5, 54.16),   # quina frontal da área (lado superior)
+    (16.5, 13.84),   # quina frontal da área (lado inferior)
+]
 
 
 class HomographyMapper:
@@ -139,6 +153,59 @@ class HomographyMapper:
         metros_por_pixel_x = self.field_length / largura
         metros_por_pixel_y = self.field_width / altura
         return x * metros_por_pixel_x, y * metros_por_pixel_y
+
+    def save_calibration(self, path: str) -> bool:
+        """Salva a calibração atual (matriz H + dimensões) em arquivo JSON.
+
+        Permite calibrar uma vez (ex.: vídeo de treino com câmera fixa) e
+        reutilizar em execuções futuras sem clicar novamente.
+
+        Args:
+            path: caminho do arquivo .json de saída.
+
+        Returns:
+            True se salvou, False se não havia calibração.
+        """
+        if self.H is None:
+            logger.error("Sem homografia calibrada para salvar.")
+            return False
+        try:
+            os.makedirs(os.path.dirname(path) or ".", exist_ok=True)
+            dados = {
+                "H": self.H.tolist(),
+                "field_size": [self.field_length, self.field_width],
+            }
+            with open(path, "w", encoding="utf-8") as f:
+                json.dump(dados, f, indent=2)
+            logger.info("Calibração salva em %s.", path)
+            return True
+        except OSError as exc:
+            logger.exception("Falha ao salvar calibração: %s", exc)
+            return False
+
+    def load_calibration(self, path: str) -> bool:
+        """Carrega uma calibração previamente salva (JSON).
+
+        Args:
+            path: caminho do arquivo .json.
+
+        Returns:
+            True se carregou com sucesso, False caso contrário.
+        """
+        if not os.path.exists(path):
+            logger.warning("Arquivo de calibração não encontrado: %s.", path)
+            return False
+        try:
+            with open(path, "r", encoding="utf-8") as f:
+                dados = json.load(f)
+            self.H = np.array(dados["H"], dtype=np.float64)
+            if "field_size" in dados:
+                self.field_length, self.field_width = dados["field_size"]
+            logger.info("Calibração carregada de %s.", path)
+            return True
+        except (OSError, ValueError, KeyError) as exc:
+            logger.exception("Falha ao carregar calibração: %s", exc)
+            return False
 
     @property
     def calibrada(self) -> bool:
