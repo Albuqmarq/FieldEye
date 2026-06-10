@@ -1,0 +1,164 @@
+"""
+team_classifier.py — Classificação de times por cor de uniforme.
+
+Etapa 3 do pipeline. Depois que o YOLO detecta os jogadores, precisamos
+descobrir a qual time cada um pertence. Fazemos isso agrupando a cor
+predominante do uniforme com K-means (k=3): dois times + goleiro.
+"""
+
+import logging
+from typing import List, Optional
+
+import cv2
+import numpy as np
+
+logger = logging.getLogger(__name__)
+
+
+class TeamClassifier:
+    """Classifica jogadores em "A", "B" ou "goalkeeper" pela cor do uniforme.
+
+    Estratégia:
+      1. Para cada recorte (crop) de jogador, extraímos a cor média da
+         região central do torso (evitando fundo/gramado nas bordas).
+      2. Calibramos um K-means com k=3 sobre essas cores nos primeiros frames.
+      3. Cada cluster vira um rótulo de time. O cluster menos populoso é
+         tratado como goleiro (normalmente há só 1-2 goleiros em campo).
+    """
+
+    def __init__(self, k: int = 3):
+        """Inicializa o classificador.
+
+        Args:
+            k: número de clusters. 3 = Time A, Time B e goleiro.
+        """
+        self.k = k
+        # Centros dos clusters (cores médias), preenchidos no fit().
+        self.centers: Optional[np.ndarray] = None
+        # Mapa {índice_do_cluster: rótulo} definido após a calibração.
+        self.cluster_to_label: dict = {}
+        # Indica se o modelo já foi calibrado.
+        self.is_fitted: bool = False
+
+    def _cor_central(self, crop: np.ndarray) -> Optional[np.ndarray]:
+        """Extrai a cor média (BGR) da região central de um crop de jogador.
+
+        Usamos a metade superior central porque é onde fica a camisa, que
+        define a cor do time. As bordas costumam conter gramado ou outros
+        jogadores e atrapalhariam o agrupamento.
+
+        Args:
+            crop: recorte do jogador (imagem BGR).
+
+        Returns:
+            Vetor [B, G, R] com a cor média, ou None se o crop for inválido.
+        """
+        if crop is None or crop.size == 0:
+            return None
+
+        h, w = crop.shape[:2]
+        if h < 4 or w < 4:
+            # Crop pequeno demais para extrair cor confiável.
+            return None
+
+        # Região central: faixa horizontal central e metade superior (torso).
+        y1, y2 = int(h * 0.15), int(h * 0.55)
+        x1, x2 = int(w * 0.25), int(w * 0.75)
+        regiao = crop[y1:y2, x1:x2]
+
+        if regiao.size == 0:
+            return None
+
+        # Média de cor na região (um valor por canal BGR).
+        return regiao.reshape(-1, 3).mean(axis=0)
+
+    def fit(self, crops: List[np.ndarray]) -> None:
+        """Calibra o classificador com recortes dos primeiros frames.
+
+        Args:
+            crops: lista de recortes (imagens BGR) de jogadores.
+        """
+        cores = []
+        for crop in crops:
+            cor = self._cor_central(crop)
+            if cor is not None:
+                cores.append(cor)
+
+        if len(cores) < self.k:
+            # Sem amostras suficientes, não dá para formar k clusters.
+            logger.warning(
+                "Amostras insuficientes para calibrar (%d < k=%d). "
+                "Classificação ficará indisponível.",
+                len(cores),
+                self.k,
+            )
+            self.is_fitted = False
+            return
+
+        amostras = np.array(cores, dtype=np.float32)
+
+        # Critério de parada do K-means do OpenCV: 100 iterações ou epsilon 0.2.
+        criterio = (cv2.TERM_CRITERIA_EPS + cv2.TERM_CRITERIA_MAX_ITER, 100, 0.2)
+
+        try:
+            # compactness, labels e centros dos clusters.
+            _, labels, centers = cv2.kmeans(
+                amostras,
+                self.k,
+                None,
+                criterio,
+                attempts=10,
+                flags=cv2.KMEANS_PP_CENTERS,  # inicialização k-means++
+            )
+        except cv2.error as exc:
+            logger.exception("Falha no K-means durante a calibração: %s", exc)
+            self.is_fitted = False
+            return
+
+        self.centers = centers
+        labels = labels.flatten()
+
+        # Conta quantas amostras caíram em cada cluster.
+        contagem = np.bincount(labels, minlength=self.k)
+
+        # Heurística: o cluster com MENOS jogadores é o goleiro.
+        # Os outros dois (mais populosos) viram Time A e Time B.
+        ordem = np.argsort(contagem)  # do menor para o maior
+        cluster_goleiro = int(ordem[0])
+        clusters_times = [int(c) for c in ordem[1:]]
+
+        self.cluster_to_label = {cluster_goleiro: "goalkeeper"}
+        rotulos_times = ["A", "B"]
+        for i, cluster in enumerate(clusters_times[:2]):
+            self.cluster_to_label[cluster] = rotulos_times[i]
+
+        self.is_fitted = True
+        logger.info(
+            "TeamClassifier calibrado com %d amostras. Mapa de clusters: %s",
+            len(cores),
+            self.cluster_to_label,
+        )
+
+    def classify(self, crop: np.ndarray) -> str:
+        """Classifica um único jogador a partir de seu recorte.
+
+        Args:
+            crop: recorte (imagem BGR) do jogador.
+
+        Returns:
+            "A", "B", "goalkeeper" ou "unknown" se não calibrado/sem cor.
+        """
+        if not self.is_fitted or self.centers is None:
+            # Sem calibração não há como atribuir time.
+            return "unknown"
+
+        cor = self._cor_central(crop)
+        if cor is None:
+            return "unknown"
+
+        # Distância euclidiana da cor até cada centro de cluster.
+        distancias = np.linalg.norm(self.centers - cor.astype(np.float32), axis=1)
+        cluster = int(np.argmin(distancias))
+
+        # Traduz o índice do cluster para o rótulo de time.
+        return self.cluster_to_label.get(cluster, "unknown")

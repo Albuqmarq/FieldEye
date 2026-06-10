@@ -1,0 +1,41 @@
+# === Python ===
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+env/
+.pytest_cache/
+
+# === Modelos de IA (pesos baixados automaticamente) ===
+*.pt
+data/models/*
+
+# === Dados de usuário (vídeos de entrada/saída — pesados) ===
+data/uploads/*
+data/outputs/*
+# mas mantém as pastas versionadas:
+!data/uploads/.gitkeep
+!data/outputs/.gitkeep
+!data/models/.gitkeep
+
+# === Node / Next.js (frontend) ===
+node_modules/
+.next/
+out/
+npm-debug.log*
+
+# === Ambiente / segredos ===
+.env
+.env.local
+*.local
+
+# === Sistema operacional / editor ===
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
+
+# === Arquivos temporários ===
+*.tmp
+*_botsort.yaml
