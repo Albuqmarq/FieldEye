@@ -87,6 +87,53 @@ def _preencher_linear(
         trajetoria[inicio + k] = (x, y)
 
 
+def smooth_trajectory(
+    trajectory: List[Posicao], window: int = 5
+) -> List[Posicao]:
+    """Suaviza uma trajetória com média móvel (reduz tremor frame a frame).
+
+    O rastreamento oscila um pouco a cada frame (a caixa "treme"), o que gera
+    pequenos deslocamentos falsos e, consequentemente, ruído na velocidade.
+    A média móvel substitui cada posição pela média das posições vizinhas
+    dentro de uma janela, deixando o movimento mais suave e as métricas mais
+    estáveis. Posições ausentes (None) são preservadas como None.
+
+    Args:
+        trajectory: lista de posições (x, y) em metros, com possíveis None.
+        window: tamanho da janela (nº de vizinhos de cada lado). window=5
+            considera até 5 frames antes e 5 depois.
+
+    Returns:
+        Nova trajetória suavizada (mesmo tamanho da original).
+    """
+    if window <= 0:
+        return list(trajectory)
+
+    n = len(trajectory)
+    resultado: List[Posicao] = [None] * n
+
+    for i in range(n):
+        if trajectory[i] is None:
+            # Mantém gaps não preenchidos como None.
+            resultado[i] = None
+            continue
+
+        # Coleta as posições válidas dentro da janela [i-window, i+window].
+        xs, ys = [], []
+        inicio = max(0, i - window)
+        fim = min(n, i + window + 1)
+        for j in range(inicio, fim):
+            p = trajectory[j]
+            if p is not None:
+                xs.append(p[0])
+                ys.append(p[1])
+
+        # Média das posições vizinhas (sempre há pelo menos a própria).
+        resultado[i] = (sum(xs) / len(xs), sum(ys) / len(ys))
+
+    return resultado
+
+
 def contar_gaps(trajectory: List[Posicao]) -> Tuple[int, int]:
     """Conta gaps em uma trajetória (útil para diagnóstico/logs).
 

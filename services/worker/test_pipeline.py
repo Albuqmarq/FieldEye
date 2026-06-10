@@ -30,7 +30,7 @@ from pipeline.team_classifier import TeamClassifier
 from pipeline.tracker import PlayerTracker
 from pipeline.homography import HomographyMapper
 from pipeline import physics
-from pipeline.interpolation import interpolate_gaps, contar_gaps
+from pipeline.interpolation import interpolate_gaps, smooth_trajectory, contar_gaps
 from pipeline.video_writer import AnnotatedVideoWriter, Anotacao
 
 # Configuração de logging para vermos as mensagens do pipeline no terminal.
@@ -388,6 +388,8 @@ def testar_pipeline_completo(caminho: str, n_frames: int = 300):
         ngaps, _ = contar_gaps(traj)
         total_gaps += ngaps
         traj_interp = interpolate_gaps(traj, max_gap=45)
+        # Suaviza a trajetória (média móvel) para reduzir tremor/ruído.
+        traj_interp = smooth_trajectory(traj_interp, window=5)
         pos_por_id[pid] = traj_interp
 
         # Velocidade por frame a partir da trajetória interpolada.
