@@ -38,6 +38,7 @@ from pipeline.interpolation import (
 )
 from pipeline.video_writer import AnnotatedVideoWriter, Anotacao
 from pipeline.camera_motion import CameraMotionCompensator
+from pipeline.consolidation import consolidar
 
 # Configuração de logging para vermos as mensagens do pipeline no terminal.
 logging.basicConfig(
@@ -404,7 +405,37 @@ def testar_pipeline_completo(caminho: str, n_frames: int = 300):
             pos_por_id.setdefault(t.id, [None] * n)
             pos_por_id[t.id][i] = pos_m
 
-    logger.info("Rastreamento concluído: %d jogadores únicos.", len(pos_por_id))
+    logger.info("Rastreamento concluído: %d fragmentos (IDs locais).", len(pos_por_id))
+
+    # --- Passo 1.5: consolidação automática (costura + filtro de ruído) ---
+    # Transforma centenas de fragmentos em jogadores reais.
+    pos_consolidado, id_map = consolidar(
+        pos_por_id, team_por_id, n,
+        max_gap_frames=45, max_dist_m=5.0, min_frames=15, min_distancia=2.0,
+    )
+
+    # Time de cada jogador consolidado: voto majoritário (ponderado por frames)
+    # entre os fragmentos que o compõem.
+    votos_time = {}
+    for orig, canon in id_map.items():
+        if canon not in pos_consolidado:
+            continue
+        t = team_por_id.get(orig, "unknown")
+        nf = sum(1 for p in pos_por_id[orig] if p is not None)
+        votos_time.setdefault(canon, {})
+        votos_time[canon][t] = votos_time[canon].get(t, 0) + nf
+    team_consolidado = {}
+    for canon, votos in votos_time.items():
+        # Ignora "unknown" quando há um time concreto.
+        cand = {k: v for k, v in votos.items() if k != "unknown"} or votos
+        team_consolidado[canon] = max(cand, key=cand.get)
+
+    # Substitui as estruturas locais pelas consolidadas.
+    pos_por_id = pos_consolidado
+    team_por_id = team_consolidado
+    frames_vistos = {
+        pid: sum(1 for p in traj if p is not None) for pid, traj in pos_por_id.items()
+    }
 
     # --- Passo 2: limpar trajetórias (outliers -> interpolar -> suavizar) ---
     dt = 1.0 / fps
@@ -441,9 +472,19 @@ def testar_pipeline_completo(caminho: str, n_frames: int = 300):
         for i, fr in enumerate(frames):
             anotacoes = []
             for t in frames_tracks[i]:
-                v = speed_por_id.get(t.id, [None] * n)[i]
+                # Mapeia o ID local para o jogador consolidado.
+                final = id_map.get(t.id)
+                if final is None:
+                    # Fragmento descartado pelo filtro de ruído — não desenha.
+                    continue
+                v = speed_por_id.get(final, [None] * n)[i]
                 anotacoes.append(
-                    Anotacao(track_id=t.id, bbox=t.bbox, team=t.team, speed=v)
+                    Anotacao(
+                        track_id=final,
+                        bbox=t.bbox,
+                        team=team_por_id.get(final, t.team),
+                        speed=v,
+                    )
                 )
             writer.write_frame(fr, anotacoes, timestamp=i / fps)
 
