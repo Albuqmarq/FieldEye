@@ -470,8 +470,13 @@ def testar_pipeline_completo(caminho: str, n_frames: int = 300):
     csv_path = os.path.join("..", "..", "data", "outputs", "stats.csv")
     _salvar_csv(estatisticas, csv_path)
 
+    # Gráfico de velocidade ao longo do tempo (matplotlib).
+    grafico_path = os.path.join("..", "..", "data", "outputs", "speed_chart.png")
+    _gerar_grafico_velocidade(speed_por_id, estatisticas, fps, grafico_path)
+
     logger.info("Vídeo anotado salvo em: %s", destino)
     logger.info("Tabela CSV salva em: %s", csv_path)
+    logger.info("Gráfico de velocidade salvo em: %s", grafico_path)
     logger.info("Jogadores detectados: %d", len(estatisticas))
     if estatisticas:
         logger.info(
@@ -493,6 +498,53 @@ def _imprimir_tabela(estatisticas):
             e["id"], e["time"], e["frames"], e["distancia_m"],
             e["v_max_kmh"], e["v_med_kmh"], e["sprints"],
         )
+
+
+def _gerar_grafico_velocidade(speed_por_id, estatisticas, fps, caminho, top=8):
+    """Gera um gráfico (matplotlib) da velocidade ao longo do tempo.
+
+    Plota uma linha por jogador (os `top` mais ativos por distância) com a
+    velocidade instantânea (km/h) em função do tempo (s).
+
+    Args:
+        speed_por_id: {id: [v_kmh ou None] por frame}.
+        estatisticas: lista de dicts por jogador (para escolher os mais ativos).
+        fps: quadros por segundo (converte índice de frame em segundos).
+        caminho: arquivo PNG de saída.
+        top: quantos jogadores plotar.
+    """
+    # Backend não-interativo (sem janela) — salva direto em arquivo.
+    import matplotlib
+    matplotlib.use("Agg")
+    import matplotlib.pyplot as plt
+
+    # Escolhe os jogadores mais ativos (mais distância) para não poluir.
+    mais_ativos = sorted(estatisticas, key=lambda e: e["distancia_m"], reverse=True)[:top]
+
+    fig, ax = plt.subplots(figsize=(14, 7))
+    for e in mais_ativos:
+        pid = e["id"]
+        speeds = speed_por_id.get(pid, [])
+        # Eixo X (tempo) e Y (velocidade), ignorando frames sem velocidade.
+        xs = [i / fps for i, v in enumerate(speeds) if v is not None]
+        ys = [v for v in speeds if v is not None]
+        if xs:
+            ax.plot(xs, ys, label=f"#{pid} ({e['time']})", linewidth=1.5)
+
+    ax.set_title("Velocidade dos jogadores ao longo do tempo")
+    ax.set_xlabel("Tempo (s)")
+    ax.set_ylabel("Velocidade (km/h)")
+    ax.grid(True, alpha=0.3)
+    ax.legend(loc="upper right", fontsize=9, ncol=2)
+    fig.tight_layout()
+
+    try:
+        fig.savefig(caminho, dpi=110)
+        logger.info("Gráfico gerado com %d jogadores.", len(mais_ativos))
+    except Exception as exc:
+        logger.error("Falha ao salvar gráfico: %s", exc)
+    finally:
+        plt.close(fig)
 
 
 def _salvar_csv(estatisticas, caminho):
