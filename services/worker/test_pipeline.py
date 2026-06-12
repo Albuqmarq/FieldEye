@@ -409,9 +409,14 @@ def testar_pipeline_completo(caminho: str, n_frames: int = 300):
 
     # --- Passo 1.5: consolidação automática (costura + filtro de ruído) ---
     # Transforma centenas de fragmentos em jogadores reais.
+    # Parâmetros ajustáveis por ambiente (sem mexer no código):
+    #   CONS_MIN_FRAMES, CONS_MIN_DIST, CONS_MAX_GAP, CONS_MAX_DIST
     pos_consolidado, id_map = consolidar(
         pos_por_id, team_por_id, n,
-        max_gap_frames=45, max_dist_m=5.0, min_frames=15, min_distancia=2.0,
+        max_gap_frames=int(os.getenv("CONS_MAX_GAP", "45")),
+        max_dist_m=float(os.getenv("CONS_MAX_DIST", "5.0")),
+        min_frames=int(os.getenv("CONS_MIN_FRAMES", "15")),
+        min_distancia=float(os.getenv("CONS_MIN_DIST", "2.0")),
     )
 
     # Time de cada jogador consolidado: voto majoritário (ponderado por frames)

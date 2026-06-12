@@ -65,11 +65,11 @@ class PlayerTracker:
     def __init__(
         self,
         use_reid: bool = False,
-        model_name: str = "yolov8n.pt",
+        model_name: str = None,
         track_buffer: int = 45,
         match_thresh: float = 0.7,
         reid_threshold: float = 0.6,
-        confidence: float = 0.3,
+        confidence: float = None,
     ):
         """Inicializa o rastreador.
 
@@ -89,7 +89,10 @@ class PlayerTracker:
         self.track_buffer = track_buffer
         self.match_thresh = match_thresh
         self.reid_threshold = reid_threshold
-        self.confidence = confidence
+        # Mesmas variáveis de ambiente do detector, para usar o mesmo modelo.
+        model_name = model_name or os.getenv("MODEL_NAME", "yolov8n.pt")
+        self.confidence = confidence if confidence is not None else float(os.getenv("YOLO_CONF", "0.3"))
+        self.imgsz = int(os.getenv("YOLO_IMGSZ", "0"))
 
         # Carrega o modelo YOLO (reutiliza o peso baixado na Fase 2).
         os.makedirs(MODELS_DIR, exist_ok=True)
@@ -202,14 +205,16 @@ class PlayerTracker:
         try:
             # persist=True mantém o estado do tracker entre chamadas (frames).
             # classes restringe a pessoas e bola.
-            resultados = self.model.track(
-                frame,
-                persist=True,
-                tracker=self.cfg_path,
-                conf=self.confidence,
-                classes=[CLASSE_PESSOA, CLASSE_BOLA],
-                verbose=False,
-            )
+            kwargs = {
+                "persist": True,
+                "tracker": self.cfg_path,
+                "conf": self.confidence,
+                "classes": [CLASSE_PESSOA, CLASSE_BOLA],
+                "verbose": False,
+            }
+            if self.imgsz and self.imgsz > 0:
+                kwargs["imgsz"] = self.imgsz
+            resultados = self.model.track(frame, **kwargs)
         except Exception as exc:
             logger.exception("Erro durante o rastreamento BoT-SORT: %s", exc)
             return []

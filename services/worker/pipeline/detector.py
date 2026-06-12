@@ -48,14 +48,24 @@ class YOLODetector:
     ultralytics o baixa automaticamente na primeira execução.
     """
 
-    def __init__(self, model_name: str = "yolov8n.pt", confidence: float = 0.3):
+    def __init__(self, model_name: str = None, confidence: float = None, imgsz: int = None):
         """Inicializa o detector.
 
+        Todos os parâmetros podem ser sobrescritos por variáveis de ambiente,
+        permitindo trocar o modelo/resolução sem mexer no código:
+            MODEL_NAME  -> ex.: "yolov8x.pt" para câmera tática aberta
+            YOLO_CONF   -> confiança mínima (ex.: 0.15)
+            YOLO_IMGSZ  -> resolução de inferência (ex.: 2560 p/ jogadores pequenos)
+
         Args:
-            model_name: nome/arquivo do modelo YOLO a carregar.
+            model_name: nome/arquivo do modelo YOLO. Padrão: yolov8n.pt (leve).
             confidence: confiança mínima para aceitar uma detecção.
+            imgsz: resolução de inferência. 0/None usa o padrão do modelo (640).
         """
-        self.confidence = confidence
+        # Resolve cada parâmetro: argumento explícito > variável de ambiente > padrão.
+        model_name = model_name or os.getenv("MODEL_NAME", "yolov8n.pt")
+        self.confidence = confidence if confidence is not None else float(os.getenv("YOLO_CONF", "0.3"))
+        self.imgsz = imgsz if imgsz is not None else int(os.getenv("YOLO_IMGSZ", "0"))
 
         # Garante que o diretório de modelos exista antes de baixar o peso.
         os.makedirs(MODELS_DIR, exist_ok=True)
@@ -118,7 +128,11 @@ class YOLODetector:
 
         try:
             # verbose=False evita que o ultralytics imprima no stdout (usamos logging).
-            resultados = self.model(frame, conf=self.confidence, verbose=False)
+            # imgsz só é passado quando configurado (>0); senão usa o padrão do modelo.
+            kwargs = {"conf": self.confidence, "verbose": False}
+            if self.imgsz and self.imgsz > 0:
+                kwargs["imgsz"] = self.imgsz
+            resultados = self.model(frame, **kwargs)
         except Exception as exc:
             logger.exception("Erro durante a inferência do YOLO: %s", exc)
             return []

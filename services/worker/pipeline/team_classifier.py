@@ -41,17 +41,20 @@ class TeamClassifier:
         self.is_fitted: bool = False
 
     def _cor_central(self, crop: np.ndarray) -> Optional[np.ndarray]:
-        """Extrai a cor média (BGR) da região central de um crop de jogador.
+        """Extrai a cor característica do uniforme em HSV (matiz/saturação/valor).
 
-        Usamos a metade superior central porque é onde fica a camisa, que
-        define a cor do time. As bordas costumam conter gramado ou outros
-        jogadores e atrapalhariam o agrupamento.
+        Usamos HSV em vez de BGR porque ele separa melhor uniformes de cores
+        parecidas: por exemplo, BRANCO (saturação baixa) x AZUL-CLARO (saturação
+        maior) ficam distantes no eixo de saturação, mas quase iguais em BGR.
+
+        Além disso, mascaramos os pixels de GRAMA (verde) e os muito escuros
+        (sombra/short), para que sobre principalmente a cor da camisa.
 
         Args:
             crop: recorte do jogador (imagem BGR).
 
         Returns:
-            Vetor [B, G, R] com a cor média, ou None se o crop for inválido.
+            Vetor [H, S, V] médio da camisa, ou None se o crop for inválido.
         """
         if crop is None or crop.size == 0:
             return None
@@ -65,12 +68,22 @@ class TeamClassifier:
         y1, y2 = int(h * 0.15), int(h * 0.55)
         x1, x2 = int(w * 0.25), int(w * 0.75)
         regiao = crop[y1:y2, x1:x2]
-
         if regiao.size == 0:
             return None
 
-        # Média de cor na região (um valor por canal BGR).
-        return regiao.reshape(-1, 3).mean(axis=0)
+        # Converte para HSV (H:0-180, S:0-255, V:0-255 no OpenCV).
+        hsv = cv2.cvtColor(regiao, cv2.COLOR_BGR2HSV).reshape(-1, 3)
+
+        # Máscara de grama: matiz verde (~35-85) com alguma saturação.
+        h_ch, s_ch, v_ch = hsv[:, 0], hsv[:, 1], hsv[:, 2]
+        eh_grama = (h_ch >= 35) & (h_ch <= 85) & (s_ch >= 40)
+        # Máscara de pixels muito escuros (sombra/short preto).
+        muito_escuro = v_ch < 40
+        validos = ~(eh_grama | muito_escuro)
+
+        # Se sobrou pouca coisa, usa todos os pixels (evita ficar sem amostra).
+        pixels = hsv[validos] if validos.sum() >= 10 else hsv
+        return pixels.mean(axis=0)
 
     def fit(self, crops: List[np.ndarray]) -> None:
         """Calibra o classificador com recortes dos primeiros frames.
