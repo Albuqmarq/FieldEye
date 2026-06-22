@@ -351,7 +351,9 @@ def testar_pipeline_completo(caminho: str, n_frames: int = 300):
 
     # --- Calibração de time (usa os primeiros frames) ---
     detector = YOLODetector()
-    classifier = TeamClassifier()
+    # TEAM_K: nº de grupos de cor. 3 p/ futebol (A/B/goleiro); 2 p/ dois
+    # corredores com roupas diferentes, etc.
+    classifier = TeamClassifier(k=int(os.getenv("TEAM_K", "3")))
     crops = []
     for fr in frames[:10]:
         for det in detector.detect(fr):
@@ -378,7 +380,10 @@ def testar_pipeline_completo(caminho: str, n_frames: int = 300):
         logger.info("Compensação de movimento de câmera: DESLIGADA (modo calibrado).")
 
     # --- Passo 1: rastrear todos os frames, guardando bbox/time/posição ---
-    tracker = PlayerTracker(use_reid=False)
+    # USE_REID=1 liga a re-identificação por aparência (melhora oclusões, ex.:
+    # duas pessoas se cruzando). Mais pesado, mas mantém os IDs corretos.
+    usar_reid = os.getenv("USE_REID", "0") == "1"
+    tracker = PlayerTracker(use_reid=usar_reid)
     frames_tracks = []            # frames_tracks[i] = lista de Track do frame i
     pos_por_id = {}               # {id: [pos_m ou None] por frame}
     team_por_id = {}              # {id: time}
