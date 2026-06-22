@@ -1,0 +1,216 @@
+# ===================================================================
+# docker-compose.yml — orquestra TODOS os contêineres do FieldEye.
+#
+# Conceitos rápidos (para aprender):
+#   - service: cada "caixinha" (contêiner) que roda algo (banco, api, etc.)
+#   - image:   imagem pronta baixada de um registro (ex.: postgres:15)
+#   - build:   constrói a imagem a partir de um Dockerfile nosso
+#   - volumes: pastas persistentes ou compartilhadas com o host
+#   - networks: rede interna onde os serviços se enxergam pelo NOME
+#   - depends_on + healthcheck: garante a ordem de subida (só sobe B quando A
+#     está SAUDÁVEL)
+#   - labels: configuração dinâmica do Traefik (roteamento por serviço)
+# ===================================================================
+
+services:
+
+  # ----------------------------------------------------------------
+  # TRAEFIK — API Gateway (porta de entrada única)
+  # ----------------------------------------------------------------
+  traefik:
+    image: traefik:v3.1
+    container_name: fieldeye-traefik
+    restart: unless-stopped
+    ports:
+      - "80:80"       # tráfego HTTP da aplicação
+      - "443:443"     # HTTPS
+      - "8080:8080"   # dashboard do Traefik (http://localhost:8080)
+    volumes:
+      # Configuração estática do Traefik (somente leitura).
+      - ./gateway/traefik.yml:/etc/traefik/traefik.yml:ro
+      # Socket do Docker: permite ao Traefik descobrir os contêineres.
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+    networks:
+      - fieldeye
+    labels:
+      # Define o middleware de RATE LIMITING (100 req/min por IP).
+      - "traefik.http.middlewares.ratelimit.ratelimit.average=100"
+      - "traefik.http.middlewares.ratelimit.ratelimit.period=1m"
+      - "traefik.http.middlewares.ratelimit.ratelimit.burst=50"
+
+  # ----------------------------------------------------------------
+  # POSTGRES — banco de dados principal
+  # ----------------------------------------------------------------
+  postgres:
+    image: postgres:15
+    container_name: fieldeye-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      POSTGRES_DB: ${POSTGRES_DB}
+    volumes:
+      # Dados persistentes (não some quando o contêiner reinicia).
+      - postgres_data:/var/lib/postgresql/data
+      # Script de criação das tabelas (roda só na 1ª subida).
+      - ./infrastructure/postgres/init.sql:/docker-entrypoint-initdb.d/init.sql:ro
+    healthcheck:
+      # O Postgres só é "healthy" quando aceita conexões.
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER} -d ${POSTGRES_DB}"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+    networks:
+      - fieldeye
+
+  # ----------------------------------------------------------------
+  # REDIS — fila (broker do Celery) e cache
+  # ----------------------------------------------------------------
+  redis:
+    image: redis:7-alpine
+    container_name: fieldeye-redis
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+    networks:
+      - fieldeye
+
+  # ----------------------------------------------------------------
+  # AUTH-SERVICE — login/registro (FastAPI + JWT)  [código na Fase 9]
+  # ----------------------------------------------------------------
+  auth-service:
+    build: ./services/auth
+    container_name: fieldeye-auth
+    restart: unless-stopped
+    env_file: .env
+    depends_on:
+      postgres:
+        condition: service_healthy
+    networks:
+      - fieldeye
+    labels:
+      - "traefik.enable=true"
+      # Roteia /api/auth/* para este serviço.
+      - "traefik.http.routers.auth.rule=PathPrefix(`/api/auth`)"
+      - "traefik.http.routers.auth.entrypoints=web"
+      - "traefik.http.routers.auth.middlewares=ratelimit"
+      - "traefik.http.services.auth.loadbalancer.server.port=8000"
+
+  # ----------------------------------------------------------------
+  # VIDEO-SERVICE — upload e jobs (FastAPI)  [código na Fase 8]
+  # ----------------------------------------------------------------
+  video-service:
+    build: ./services/video
+    container_name: fieldeye-video
+    restart: unless-stopped
+    env_file: .env
+    volumes:
+      - ./data:/data   # compartilha uploads/outputs com worker e nginx
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    networks:
+      - fieldeye
+    labels:
+      - "traefik.enable=true"
+      - "traefik.http.routers.video.rule=PathPrefix(`/api/videos`)"
+      - "traefik.http.routers.video.entrypoints=web"
+      - "traefik.http.routers.video.middlewares=ratelimit"
+      - "traefik.http.services.video.loadbalancer.server.port=8000"
+
+  # ----------------------------------------------------------------
+  # ANALYTICS-SERVICE — resultados e estatísticas (FastAPI)  [Fase 8]
+  # ----------------------------------------------------------------
+  analytics-service:
+    build: ./services/analytics
+    container_name: fieldeye-analytics
+    restart: unless-stopped
+    env_file: .env
+    volumes:
+      - ./data:/data
+    depends_on:
+      postgres:
+        condition: service_healthy
+    networks:
+      - fieldeye
+    labels:
+      - "traefik.enable=true"
+      - "traefik.http.routers.analytics.rule=PathPrefix(`/api/analytics`)"
+      - "traefik.http.routers.analytics.entrypoints=web"
+      - "traefik.http.routers.analytics.middlewares=ratelimit"
+      - "traefik.http.services.analytics.loadbalancer.server.port=8000"
+
+  # ----------------------------------------------------------------
+  # WORKER — processamento de IA (Celery + YOLO)  [código na Fase 7]
+  # Não é exposto pelo Traefik: ele consome jobs da fila, não recebe HTTP.
+  # ----------------------------------------------------------------
+  worker:
+    build: ./services/worker
+    restart: unless-stopped
+    env_file: .env
+    volumes:
+      - ./data:/data
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    networks:
+      - fieldeye
+    deploy:
+      replicas: 2   # 2 workers em paralelo (mais vídeos ao mesmo tempo)
+
+  # ----------------------------------------------------------------
+  # FRONTEND — site em Next.js  [código na Fase 10]
+  # Catch-all: tudo que NÃO for /api/* cai aqui.
+  # ----------------------------------------------------------------
+  frontend:
+    build: ./frontend
+    container_name: fieldeye-frontend
+    restart: unless-stopped
+    env_file: .env
+    depends_on:
+      - auth-service
+      - video-service
+      - analytics-service
+    networks:
+      - fieldeye
+    labels:
+      - "traefik.enable=true"
+      - "traefik.http.routers.frontend.rule=PathPrefix(`/`)"
+      - "traefik.http.routers.frontend.entrypoints=web"
+      - "traefik.http.services.frontend.loadbalancer.server.port=3000"
+
+  # ----------------------------------------------------------------
+  # NGINX — serve os vídeos/arquivos processados de /data/outputs
+  # ----------------------------------------------------------------
+  files:
+    image: nginx:alpine
+    container_name: fieldeye-files
+    restart: unless-stopped
+    volumes:
+      - ./data/outputs:/usr/share/nginx/html:ro
+    networks:
+      - fieldeye
+    labels:
+      - "traefik.enable=true"
+      # /files/* serve os arquivos; o stripprefix remove o /files antes.
+      - "traefik.http.routers.files.rule=PathPrefix(`/files`)"
+      - "traefik.http.routers.files.entrypoints=web"
+      - "traefik.http.routers.files.middlewares=files-strip"
+      - "traefik.http.middlewares.files-strip.stripprefix.prefixes=/files"
+      - "traefik.http.services.files.loadbalancer.server.port=80"
+
+# Volumes nomeados (gerenciados pelo Docker).
+volumes:
+  postgres_data:
+
+# Rede interna compartilhada por todos os serviços.
+networks:
+  fieldeye:
+    driver: bridge
