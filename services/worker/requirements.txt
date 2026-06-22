@@ -1,0 +1,14 @@
+# Dependências do worker (processamento de IA + fila Celery).
+
+# Visão computacional / IA
+ultralytics==8.4.64                # YOLOv8 + BoT-SORT
+opencv-python-headless==4.13.0.92  # OpenCV sem GUI (ideal para servidor/Docker)
+numpy>=1.26
+lap>=0.5.12                        # associação húngara (necessária ao tracking)
+
+# Fila de tarefas
+celery==5.4.0                      # processamento assíncrono
+redis==5.0.8                       # cliente do broker/fila
+
+# Banco de dados
+psycopg2-binary==2.9.9             # driver PostgreSQL
