@@ -1,0 +1,10 @@
+# Dependências do video-service (API de upload e jobs).
+fastapi==0.115.5            # framework web
+uvicorn[standard]==0.32.1   # servidor ASGI que roda o FastAPI
+sqlalchemy==2.0.36          # ORM
+asyncpg==0.30.0             # driver PostgreSQL assíncrono
+python-jose[cryptography]==3.3.0  # validação de JWT
+python-multipart==0.0.17    # necessário para upload de arquivos
+celery==5.4.0               # cliente para enfileirar tarefas
+redis==5.0.8                # broker do Celery
+pydantic==2.10.3            # validação de dados (vem com o FastAPI, fixado p/ garantir)
