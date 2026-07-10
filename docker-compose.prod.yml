@@ -1,0 +1,61 @@
+# ============================================================
+# docker-compose.prod.yml — ajustes de PRODUÇÃO.
+# Use junto do arquivo base:
+#   docker compose -f docker-compose.yml -f docker-compose.prod.yml up -d --build
+#
+# Este arquivo só contém as DIFERENÇAS em relação ao base.
+# ============================================================
+
+services:
+
+  # --- Gateway: sem dashboard aberto em produção ---
+  traefik:
+    # Não expõe a porta 8080 (dashboard) em produção.
+    ports:
+      - "80:80"
+      - "443:443"
+    # Em produção, ative HTTPS automático (Let's Encrypt) editando o traefik.yml
+    # e adicionando um resolver de certificados. (Deixado como próximo passo.)
+    restart: always
+
+  # --- Banco: senha via Docker secret (mais seguro que variável de ambiente) ---
+  postgres:
+    restart: always
+    # Exemplo de uso de secret (descomente e crie o secret abaixo):
+    # environment:
+    #   POSTGRES_PASSWORD_FILE: /run/secrets/postgres_password
+    # secrets:
+    #   - postgres_password
+
+  redis:
+    restart: always
+
+  auth-service:
+    restart: always
+  video-service:
+    restart: always
+  analytics-service:
+    restart: always
+  frontend:
+    restart: always
+  files:
+    restart: always
+
+  # --- Worker: suporte a GPU (opcional, exige NVIDIA + Container Toolkit) ---
+  worker:
+    restart: always
+    # Descomente para habilitar GPU (acelera muito o modo "Qualidade"):
+    # deploy:
+    #   resources:
+    #     reservations:
+    #       devices:
+    #         - driver: nvidia
+    #           count: 1
+    #           capabilities: [gpu]
+
+# Exemplo de Docker secret para a senha do banco (crie o arquivo secreto):
+# secrets:
+#   postgres_password:
+#     file: ./secrets/postgres_password.txt
+
+# Volumes nomeados já são gerenciados pelo Docker (definidos no base).
