@@ -16,6 +16,7 @@ export default function Painel() {
   const [jobs, setJobs] = useState<Job[]>([]);
   const [modo, setModo] = useState<"velocidade" | "qualidade">("velocidade");
   const [area, setArea] = useState<"regiao" | "oficial">("regiao");
+  const [arquivo, setArquivo] = useState<File | null>(null);
   const [enviando, setEnviando] = useState(false);
   const [erro, setErro] = useState("");
 
@@ -39,11 +40,15 @@ export default function Painel() {
     } catch {}
   }
 
-  async function enviar(file: File) {
+  // Só envia para a IA quando o usuário clica em "Executar análise",
+  // já com o arquivo escolhido E as opções (modo/área) selecionadas.
+  async function executar() {
+    if (!arquivo) return;
     setErro("");
     setEnviando(true);
     try {
-      await videos.upload(file);
+      await videos.upload(arquivo, { mode: modo, area });
+      setArquivo(null);
       await carregarJobs();
     } catch (err) {
       setErro(err instanceof Error ? err.message : "Falha no upload.");
@@ -64,13 +69,26 @@ export default function Painel() {
           className="rounded-xl p-6 text-center cursor-pointer mb-6"
           style={{ border: "1.5px dashed #34a05f55", background: "#14161a" }}
         >
-          <CloudUpload size={30} className="text-grn mx-auto" />
-          <div className="text-fg text-sm font-medium mt-2">
-            {enviando ? "Enviando..." : "Arraste um vídeo ou clique para enviar"}
-          </div>
-          <div className="text-mut text-xs mt-1">MP4, MOV, AVI ou MKV — até 500 MB</div>
+          {arquivo ? (
+            <>
+              <Video size={28} className="text-grn mx-auto" />
+              <div className="text-fg text-sm font-medium mt-2 truncate">{arquivo.name}</div>
+              <div className="text-mut text-xs mt-1">
+                {(arquivo.size / (1024 * 1024)).toFixed(1)} MB · clique para trocar de vídeo
+              </div>
+            </>
+          ) : (
+            <>
+              <CloudUpload size={30} className="text-grn mx-auto" />
+              <div className="text-fg text-sm font-medium mt-2">Arraste um vídeo ou clique para selecionar</div>
+              <div className="text-mut text-xs mt-1">MP4, MOV, AVI ou MKV — até 500 MB</div>
+            </>
+          )}
           <input ref={inputRef} type="file" accept="video/*" hidden
-            onChange={(e) => e.target.files?.[0] && enviar(e.target.files[0])} />
+            onChange={(e) => {
+              if (e.target.files?.[0]) { setArquivo(e.target.files[0]); setErro(""); }
+              e.target.value = ""; // permite re-selecionar o mesmo arquivo
+            }} />
         </div>
         {erro && <p className="text-red-400 text-xs mb-4">{erro}</p>}
 
@@ -97,6 +115,16 @@ export default function Painel() {
             icon={LayoutGrid} titulo="Campo oficial"
             desc="Sabe as medidas? Escolha o tipo (futebol, futsal, society) e usamos as dimensões reais." />
         </div>
+
+        {/* Botão de execução: só AQUI o vídeo é enviado para a IA. */}
+        <button onClick={executar} disabled={!arquivo || enviando}
+          className="btn-primary w-full py-2.5 mb-2 inline-flex items-center justify-center gap-2 disabled:opacity-50 disabled:cursor-not-allowed">
+          <Zap size={16} />
+          {enviando ? "Enviando para a IA…" : "Executar análise"}
+        </button>
+        <p className="text-mut text-xs text-center mb-8">
+          {arquivo ? "Confira as opções acima e execute quando quiser." : "Selecione um vídeo para habilitar."}
+        </p>
 
         {/* Lista de jobs */}
         <div className="text-[13px] text-mut mb-2.5">Seus jobs</div>

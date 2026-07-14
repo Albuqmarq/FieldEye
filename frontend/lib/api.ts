@@ -62,10 +62,14 @@ export const auth = {
 };
 
 // ---- Vídeos / jobs ----
+export type UploadOpts = { mode?: string; area?: string };
+
 export const videos = {
-  upload: (file: File) => {
+  upload: (file: File, opts: UploadOpts = {}) => {
     const form = new FormData();
     form.append("file", file);
+    if (opts.mode) form.append("mode", opts.mode);
+    if (opts.area) form.append("area", opts.area);
     return req("/api/videos/upload", { method: "POST", body: form });
   },
   list: () => req("/api/videos/jobs"),
@@ -80,7 +84,23 @@ export const analytics = {
   timeline: (id: string) => req(`/api/analytics/${id}/timeline`),
   heatmap: (id: string, playerId: number) =>
     req(`/api/analytics/${id}/heatmap/${playerId}`),
-  // URLs de download (abertas direto no navegador).
-  csvUrl: (id: string) => `${API}/api/analytics/${id}/export/csv`,
-  pdfUrl: (id: string) => `${API}/api/analytics/${id}/export/pdf`,
+  // Download de CSV/PDF. Os endpoints exigem o token JWT, então NÃO dá para
+  // usar um <a href> simples (não envia o Authorization). Buscamos com fetch
+  // autenticado, viramos um blob e disparamos o download no navegador.
+  download: async (id: string, kind: "csv" | "pdf") => {
+    const token = getToken();
+    const res = await fetch(`${API}/api/analytics/${id}/export/${kind}`, {
+      headers: token ? { Authorization: `Bearer ${token}` } : {},
+    });
+    if (!res.ok) throw new Error(`Erro ao gerar ${kind.toUpperCase()} (${res.status})`);
+    const blob = await res.blob();
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = `fieldeye_${id}.${kind}`;
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    URL.revokeObjectURL(url);
+  },
 };

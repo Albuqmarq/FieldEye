@@ -27,6 +27,19 @@ export default function Resultados() {
   const [progress, setProgress] = useState(0);
   const [players, setPlayers] = useState<Player[]>([]);
   const [timeline, setTimeline] = useState<TL[]>([]);
+  const [baixando, setBaixando] = useState<"csv" | "pdf" | null>(null);
+
+  // Baixa CSV/PDF com autenticação (o endpoint exige o token JWT).
+  async function baixar(kind: "csv" | "pdf") {
+    setBaixando(kind);
+    try {
+      await analytics.download(id, kind);
+    } catch (e) {
+      alert(e instanceof Error ? e.message : "Falha ao baixar o arquivo.");
+    } finally {
+      setBaixando(null);
+    }
+  }
 
   // Enquanto não terminar, consulta o status a cada 3s (polling).
   useEffect(() => {
@@ -79,12 +92,14 @@ export default function Resultados() {
         <div className="flex items-center justify-between flex-wrap gap-2.5 mb-4">
           <h1 className="text-fg text-base font-medium">Resultados</h1>
           <div className="flex gap-2">
-            <a href={analytics.csvUrl(id)} className="btn-ghost text-[13px] px-3.5 py-2 inline-flex items-center gap-1.5">
-              <FileSpreadsheet size={14} /> CSV
-            </a>
-            <a href={analytics.pdfUrl(id)} className="btn-ghost text-[13px] px-3.5 py-2 inline-flex items-center gap-1.5">
-              <FileText size={14} /> PDF
-            </a>
+            <button onClick={() => baixar("csv")} disabled={baixando !== null}
+              className="btn-ghost text-[13px] px-3.5 py-2 inline-flex items-center gap-1.5 disabled:opacity-50">
+              <FileSpreadsheet size={14} /> {baixando === "csv" ? "Gerando…" : "CSV"}
+            </button>
+            <button onClick={() => baixar("pdf")} disabled={baixando !== null}
+              className="btn-ghost text-[13px] px-3.5 py-2 inline-flex items-center gap-1.5 disabled:opacity-50">
+              <FileText size={14} /> {baixando === "pdf" ? "Gerando…" : "PDF"}
+            </button>
           </div>
         </div>
 
@@ -103,7 +118,10 @@ export default function Resultados() {
         {timeline.length > 0 && <SpeedChart timeline={timeline} players={players} />}
 
         {/* Cards por jogador */}
-        <div className="text-[13px] text-mut mb-2.5 mt-4">Jogadores</div>
+        <div className="mt-4 mb-2.5">
+          <div className="text-[13px] text-fg font-medium">Jogadores</div>
+          <div className="text-[11px] text-mut">O número é o ID de rastreio (não o número da camisa) e a cor indica o time detectado.</div>
+        </div>
         <div className="grid gap-2.5" style={{ gridTemplateColumns: "repeat(auto-fit,minmax(150px,1fr))" }}>
           {players.map((p) => {
             const c = cor(p.team);
@@ -140,26 +158,60 @@ function Row({ k, v }: { k: string; v: string }) {
   );
 }
 
-// Gráfico simples de velocidade ao longo do tempo (top 4 jogadores).
+// Gráfico de velocidade ao longo do tempo (top 4 jogadores por distância),
+// com eixos rotulados (km/h e tempo) e legenda identificando cada linha.
 function SpeedChart({ timeline, players }: { timeline: TL[]; players: Player[] }) {
   const cores = ["#34a05f", "#60a5fa", "#f97316", "#f43f5e"];
-  const top = [...players].sort((a, b) => b.total_distance - a.total_distance).slice(0, 4).map((p) => p.player_id);
-  const series = timeline.filter((t) => top.includes(t.player_id));
-  const maxSpeed = 40, maxT = Math.max(1, ...series.flatMap((s) => s.points.map((p) => p.timestamp || 0)));
-  const X = (t: number) => 30 + (t / maxT) * 260;
-  const Y = (v: number) => 100 - (v / maxSpeed) * 88;
+  const top = [...players].sort((a, b) => b.total_distance - a.total_distance).slice(0, 4);
+  const topIds = top.map((p) => p.player_id);
+  const series = timeline.filter((t) => topIds.includes(t.player_id));
+
+  // Escala: eixo Y arredondado ao próximo múltiplo de 10 acima da vel. máxima.
+  const vMaxReal = Math.max(10, ...series.flatMap((s) => s.points.map((p) => p.speed || 0)));
+  const maxSpeed = Math.ceil(vMaxReal / 10) * 10;
+  const maxT = Math.max(1, ...series.flatMap((s) => s.points.map((p) => p.timestamp || 0)));
+  const X = (t: number) => 34 + (t / maxT) * 256;
+  const Y = (v: number) => 100 - (v / maxSpeed) * 86;
+
+  // Ticks do eixo Y (0, meio, máx) e do eixo X (0, meio, fim em segundos).
+  const yTicks = [0, maxSpeed / 2, maxSpeed];
+  const xTicks = [0, maxT / 2, maxT];
+  const teamLabel = (id: number) => {
+    const p = players.find((pl) => pl.player_id === id);
+    return p ? cor(p.team).label : "";
+  };
+
   return (
     <div className="card p-3.5 mb-2">
-      <div className="text-[13px] text-fg font-medium mb-2.5">Velocidade ao longo do tempo</div>
-      <svg viewBox="0 0 300 120" width="100%">
-        <line x1="30" y1="100" x2="290" y2="100" stroke="#2a2d33" />
-        <line x1="30" y1="12" x2="30" y2="100" stroke="#2a2d33" />
+      <div className="text-[13px] text-fg font-medium mb-2.5">Velocidade ao longo do tempo (km/h)</div>
+      <svg viewBox="0 0 300 122" width="100%">
+        {/* Linhas de grade + rótulos do eixo Y (km/h) */}
+        {yTicks.map((v) => (
+          <g key={v}>
+            <line x1="34" y1={Y(v)} x2="290" y2={Y(v)} stroke="#22252b" strokeWidth="0.5" />
+            <text x="30" y={Y(v) + 3} fill="#6b7280" fontSize="7" textAnchor="end">{v.toFixed(0)}</text>
+          </g>
+        ))}
+        {/* Rótulos do eixo X (tempo em s) */}
+        {xTicks.map((t) => (
+          <text key={t} x={X(t)} y="112" fill="#6b7280" fontSize="7" textAnchor="middle">{t.toFixed(0)}s</text>
+        ))}
+        {/* Séries por jogador */}
         {series.map((s, i) => (
-          <polyline key={s.player_id} fill="none" stroke={cores[i % 4]} strokeWidth="1.6"
+          <polyline key={s.player_id} fill="none" stroke={cores[i % 4]} strokeWidth="1.4"
             points={s.points.filter((p) => p.speed != null).map((p) => `${X(p.timestamp)},${Y(p.speed as number)}`).join(" ")} />
         ))}
-        <text x="150" y="116" fill="#6b7280" fontSize="9" textAnchor="middle">tempo (s)</text>
+        <text x="162" y="120" fill="#6b7280" fontSize="7" textAnchor="middle">tempo (s)</text>
       </svg>
+      {/* Legenda: qual cor é qual jogador */}
+      <div className="flex flex-wrap gap-x-4 gap-y-1 mt-2">
+        {top.map((p, i) => (
+          <div key={p.player_id} className="flex items-center gap-1.5 text-[11px] text-mut">
+            <span className="inline-block w-3 h-[2px] rounded" style={{ background: cores[i % 4] }} />
+            Jogador #{p.player_id} <span className="opacity-70">({teamLabel(p.player_id)})</span>
+          </div>
+        ))}
+      </div>
     </div>
   );
 }

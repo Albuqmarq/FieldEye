@@ -17,7 +17,7 @@ import os
 import uuid
 
 from celery import Celery
-from fastapi import Depends, FastAPI, File, HTTPException, UploadFile, status
+from fastapi import Depends, FastAPI, File, Form, HTTPException, UploadFile, status
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from jose import JWTError, jwt
 from sqlalchemy import delete, select
@@ -70,10 +70,16 @@ async def health():
 @app.post("/api/videos/upload", response_model=UploadResponse)
 async def upload_video(
     file: UploadFile = File(...),
+    mode: str = Form("velocidade"),   # "velocidade" (rápido) ou "qualidade"
+    area: str = Form("regiao"),       # "regiao" (marcar no vídeo) ou "oficial"
     user_id: int = Depends(usuario_atual),
     db: AsyncSession = Depends(get_db),
 ):
-    """Recebe um vídeo, cria o job e o envia para a fila de processamento."""
+    """Recebe um vídeo, cria o job e o envia para a fila de processamento.
+
+    As opções `mode` e `area` são escolhidas pelo usuário no painel antes de
+    clicar em "Executar" e seguem para o worker via fila (options).
+    """
     # 1) Valida a extensão do arquivo.
     ext = os.path.splitext(file.filename or "")[1].lower()
     if ext not in EXTENSOES_OK:
@@ -100,7 +106,8 @@ async def upload_video(
     await db.refresh(job)
 
     # 4) Enfileira o processamento (o worker pega esta mensagem no Redis).
-    celery_app.send_task("process_video", args=[str(job.id), caminho, {}])
+    opcoes = {"mode": mode, "area": area}
+    celery_app.send_task("process_video", args=[str(job.id), caminho, opcoes])
 
     return UploadResponse(
         job_id=job.id, status=job.status, message="Vídeo recebido e na fila de processamento."

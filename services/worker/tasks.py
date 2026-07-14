@@ -16,6 +16,7 @@ fazer isso dentro de uma requisição HTTP (o navegador daria timeout).
 import json
 import logging
 import os
+import subprocess
 from datetime import datetime, timezone
 
 import psycopg2
@@ -47,6 +48,42 @@ app.conf.update(
 
 # Diretórios de dados (montados como volume no contêiner).
 OUTPUTS_DIR = os.getenv("OUTPUTS_DIR", "/data/outputs")
+
+
+# ----------------------------------------------------------------------
+# Pós-processamento de vídeo
+# ----------------------------------------------------------------------
+def _transcodificar_h264(caminho: str) -> None:
+    """Reescreve o vídeo em H.264 (yuv420p) para tocar direto no navegador.
+
+    O OpenCV grava com o codec mp4v (MPEG-4 Part 2), que players como VLC
+    reproduzem, mas Chrome/Firefox/Safari NÃO. Convertemos para H.264 com
+    `+faststart` (move o índice para o início, permitindo streaming) usando
+    o ffmpeg já instalado na imagem do worker.
+
+    Se a conversão falhar por qualquer motivo, mantemos o arquivo original
+    (melhor um vídeo que ao menos baixa do que nenhum).
+    """
+    tmp = f"{caminho}.h264.mp4"
+    cmd = [
+        "ffmpeg", "-y", "-loglevel", "error",
+        "-i", caminho,
+        "-c:v", "libx264", "-preset", "veryfast", "-crf", "23",
+        "-pix_fmt", "yuv420p", "-movflags", "+faststart",
+        "-an",  # sem áudio (o vídeo anotado não tem trilha)
+        tmp,
+    ]
+    try:
+        subprocess.run(cmd, check=True, capture_output=True)
+        os.replace(tmp, caminho)
+        logger.info("Vídeo %s convertido para H.264 (compatível com navegador).", caminho)
+    except Exception as exc:
+        logger.warning("Falha ao converter %s para H.264: %s", caminho, exc)
+        if os.path.exists(tmp):
+            try:
+                os.remove(tmp)
+            except OSError:
+                pass
 
 
 # ----------------------------------------------------------------------
@@ -151,6 +188,9 @@ def process_video(self, job_id: str, video_path: str, options: dict = None):
 
         # Executa o pipeline (o "motor").
         resultado = processar_video(video_path, output_path, options, progress_cb)
+
+        # Converte o vídeo anotado para H.264 para tocar no navegador.
+        _transcodificar_h264(output_path)
 
         # Persiste os resultados e finaliza o job.
         _salvar_resultados(conn, job_id, resultado)
