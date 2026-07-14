@@ -23,8 +23,8 @@ entryPoints:
 providers:
   docker:
     # Conversa com o Docker para descobrir os contêineres automaticamente.
-    exposedByDefault: false   # só roteia serviços marcados com traefik.enable=true
-    network: fieldeye         # rede interna onde os serviços conversam
+    exposedByDefault: false   # só roteia serviços com traefik.enable=true
+    network: fieldeye         # rede interna (nome fixado no docker-compose)
 
 # --- Logs ---
 log:

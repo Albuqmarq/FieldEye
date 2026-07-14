@@ -18,7 +18,7 @@ services:
   # TRAEFIK — API Gateway (porta de entrada única)
   # ----------------------------------------------------------------
   traefik:
-    image: traefik:v3.1
+    image: traefik:latest
     container_name: fieldeye-traefik
     restart: unless-stopped
     ports:
@@ -33,6 +33,8 @@ services:
     networks:
       - fieldeye
     labels:
+      # Habilita a leitura destes labels pelo próprio Traefik.
+      - "traefik.enable=true"
       # Define o middleware de RATE LIMITING (100 req/min por IP).
       - "traefik.http.middlewares.ratelimit.ratelimit.average=100"
       - "traefik.http.middlewares.ratelimit.ratelimit.period=1m"
@@ -213,4 +215,5 @@ volumes:
 # Rede interna compartilhada por todos os serviços.
 networks:
   fieldeye:
+    name: fieldeye     # nome fixo (não prefixado pelo projeto) — usado pelo Traefik
     driver: bridge
