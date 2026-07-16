@@ -65,6 +65,19 @@ body {
 .input::placeholder { color: #6b7280; }
 .input:focus { outline: none; border-color: var(--color-grn); }
 
+/* ---- Navegação por âncora (rolagem suave + destaque da seção) ---- */
+html { scroll-behavior: smooth; }
+/* Ao pular para uma seção, deixa uma folga do topo e a destaca por instantes. */
+[id]:target {
+  scroll-margin-top: 72px;
+  animation: fe-destaque 2.4s ease;
+}
+@keyframes fe-destaque {
+  0%   { box-shadow: inset 0 0 0 2px var(--color-grn); }
+  70%  { box-shadow: inset 0 0 0 2px var(--color-grn); }
+  100% { box-shadow: inset 0 0 0 2px transparent; }
+}
+
 /* ---- Animações da ilustração do campo ---- */
 .fe-pulse { animation: fepulse 1.3s ease-in-out infinite; }
 @keyframes fepulse { 0%,100% { opacity: 1; } 50% { opacity: 0.3; } }

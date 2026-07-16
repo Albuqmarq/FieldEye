@@ -10,7 +10,7 @@ export default function Navbar() {
         FieldEye
       </Link>
       <nav className="flex items-center gap-4 text-[13px]">
-        <Link href="/sobre" className="nav-link">Sobre</Link>
+        <Link href="/#sobre" className="nav-link">Sobre</Link>
         <Link href="/#como-funciona" className="nav-link">Como funciona</Link>
         <Link href="/#recursos" className="nav-link">Recursos</Link>
         <Link href="/login" className="nav-link">Entrar</Link>
