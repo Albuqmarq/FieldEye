@@ -62,7 +62,12 @@ export const auth = {
 };
 
 // ---- Vídeos / jobs ----
-export type UploadOpts = { mode?: string; area?: string };
+export type UploadOpts = {
+  mode?: string;
+  area?: string;
+  fieldType?: string; // "futebol" | "futsal" | "society" (campo oficial)
+  fieldPoints?: { x: number; y: number }[]; // cantos do campo (px do vídeo)
+};
 
 export const videos = {
   upload: (file: File, opts: UploadOpts = {}) => {
@@ -70,6 +75,11 @@ export const videos = {
     form.append("file", file);
     if (opts.mode) form.append("mode", opts.mode);
     if (opts.area) form.append("area", opts.area);
+    if (opts.fieldType) form.append("field_type", opts.fieldType);
+    // Os pontos vão como JSON; o backend converte para a homografia.
+    if (opts.fieldPoints && opts.fieldPoints.length === 4) {
+      form.append("field_points", JSON.stringify(opts.fieldPoints.map((p) => [p.x, p.y])));
+    }
     return req("/api/videos/upload", { method: "POST", body: form });
   },
   list: () => req("/api/videos/jobs"),

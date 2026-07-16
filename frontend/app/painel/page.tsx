@@ -3,8 +3,9 @@
 import { useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
-import { CloudUpload, Zap, Gem, Crop, LayoutGrid, CheckCircle2, Video } from "lucide-react";
+import { CloudUpload, Zap, Gem, Crop, LayoutGrid, CheckCircle2, Video, MapPin } from "lucide-react";
 import AppBar from "@/components/AppBar";
+import MarcadorCampo, { Ponto } from "@/components/MarcadorCampo";
 import { auth, videos, getToken } from "@/lib/api";
 
 type Job = { id: string; status: string; progress: number };
@@ -16,7 +17,10 @@ export default function Painel() {
   const [jobs, setJobs] = useState<Job[]>([]);
   const [modo, setModo] = useState<"velocidade" | "qualidade">("velocidade");
   const [area, setArea] = useState<"regiao" | "oficial">("regiao");
+  const [tipoCampo, setTipoCampo] = useState<"futebol" | "futsal" | "society">("futebol");
   const [arquivo, setArquivo] = useState<File | null>(null);
+  const [pontos, setPontos] = useState<Ponto[] | null>(null); // cantos do campo marcados
+  const [marcando, setMarcando] = useState(false);
   const [enviando, setEnviando] = useState(false);
   const [erro, setErro] = useState("");
 
@@ -47,8 +51,12 @@ export default function Painel() {
     setErro("");
     setEnviando(true);
     try {
-      await videos.upload(arquivo, { mode: modo, area });
+      // Só envia os pontos do campo quando o modo de área é "marcar região".
+      const fieldPoints = area === "regiao" && pontos ? pontos : undefined;
+      const fieldType = area === "oficial" ? tipoCampo : undefined;
+      await videos.upload(arquivo, { mode: modo, area, fieldType, fieldPoints });
       setArquivo(null);
+      setPontos(null);
       await carregarJobs();
     } catch (err) {
       setErro(err instanceof Error ? err.message : "Falha no upload.");
@@ -86,7 +94,7 @@ export default function Painel() {
           )}
           <input ref={inputRef} type="file" accept="video/*" hidden
             onChange={(e) => {
-              if (e.target.files?.[0]) { setArquivo(e.target.files[0]); setErro(""); }
+              if (e.target.files?.[0]) { setArquivo(e.target.files[0]); setPontos(null); setErro(""); }
               e.target.value = ""; // permite re-selecionar o mesmo arquivo
             }} />
         </div>
@@ -115,6 +123,60 @@ export default function Painel() {
             icon={LayoutGrid} titulo="Campo oficial"
             desc="Sabe as medidas? Escolha o tipo (futebol, futsal, society) e usamos as dimensões reais." />
         </div>
+
+        {/* Seletor de tipo de campo: aparece com "Campo oficial". */}
+        {area === "oficial" && (
+          <div className="card p-3.5 mb-6 flex items-center justify-between gap-3 flex-wrap">
+            <div className="min-w-0">
+              <div className="text-fg text-[13px] font-medium">Tipo de campo</div>
+              <div className="text-mut text-xs">Usamos as dimensões oficiais para medir as distâncias.</div>
+            </div>
+            <select
+              value={tipoCampo}
+              onChange={(e) => setTipoCampo(e.target.value as "futebol" | "futsal" | "society")}
+              className="bg-ink border border-line rounded-lg text-fg text-[13px] px-3 py-2 shrink-0"
+            >
+              <option value="futebol">Futebol de campo (105 × 68 m)</option>
+              <option value="futsal">Futsal (40 × 20 m)</option>
+              <option value="society">Society (50 × 30 m)</option>
+            </select>
+          </div>
+        )}
+
+        {/* Calibração interativa: só faz sentido com "marcar região" + vídeo escolhido. */}
+        {area === "regiao" && (
+          <div className="card p-3.5 mb-6 flex items-center justify-between gap-3 flex-wrap">
+            <div className="flex items-center gap-2.5 min-w-0">
+              <MapPin size={18} className={pontos ? "text-grn shrink-0" : "text-mut shrink-0"} />
+              <div className="min-w-0">
+                <div className="text-fg text-[13px] font-medium">Calibração do campo</div>
+                <div className="text-mut text-xs">
+                  {!arquivo
+                    ? "Selecione um vídeo para marcar os cantos do campo."
+                    : pontos
+                    ? "Campo marcado ✓ — velocidades serão calibradas em metros."
+                    : "Sem marcar, o cálculo usa uma estimativa aproximada."}
+                </div>
+              </div>
+            </div>
+            <button
+              onClick={() => setMarcando(true)}
+              disabled={!arquivo}
+              className="btn-ghost text-[13px] px-3 py-1.5 shrink-0 disabled:opacity-50 disabled:cursor-not-allowed"
+            >
+              {pontos ? "Remarcar campo" : "Marcar campo"}
+            </button>
+          </div>
+        )}
+
+        {/* Modal do marcador de campo (calibração interativa da homografia). */}
+        {marcando && arquivo && (
+          <MarcadorCampo
+            file={arquivo}
+            onConfirm={(p) => { setPontos(p); setMarcando(false); }}
+            onClose={() => setMarcando(false)}
+          />
+        )}
 
         {/* Botão de execução: só AQUI o vídeo é enviado para a IA. */}
         <button onClick={executar} disabled={!arquivo || enviando}
