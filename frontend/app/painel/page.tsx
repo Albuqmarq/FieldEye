@@ -8,7 +8,14 @@ import AppBar from "@/components/AppBar";
 import MarcadorCampo, { Ponto } from "@/components/MarcadorCampo";
 import { auth, videos, getToken } from "@/lib/api";
 
-type Job = { id: string; status: string; progress: number };
+type Job = { id: string; status: string; progress: number; options?: { filename?: string } };
+
+// Nome amigável: o arquivo enviado (sem extensão) ou "Vídeo N" como fallback.
+function nomeAmigavel(job: Job, indice: number, total: number): string {
+  const f = job.options?.filename;
+  if (f) return f.replace(/\.[^.]+$/, "");
+  return `Vídeo ${total - indice}`;
+}
 
 export default function Painel() {
   const router = useRouter();
@@ -191,11 +198,11 @@ export default function Painel() {
         {/* Lista de jobs */}
         <div className="text-[13px] text-mut mb-2.5">Seus jobs</div>
         {jobs.length === 0 && <p className="text-mut text-xs">Nenhuma análise ainda.</p>}
-        {jobs.map((j) => (
+        {jobs.map((j, idx) => (
           <div key={j.id} className="flex items-center justify-between card p-3 mb-2">
             <div className="flex items-center gap-2.5 min-w-0">
               <Video size={18} className="text-grn shrink-0" />
-              <span className="text-fg text-[13px] truncate">análise {j.id.slice(0, 8)}</span>
+              <span className="text-fg text-[13px] truncate">{nomeAmigavel(j, idx, jobs.length)}</span>
             </div>
             {j.status === "done" ? (
               <div className="flex items-center gap-2.5">

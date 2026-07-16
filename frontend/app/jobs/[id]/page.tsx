@@ -27,6 +27,7 @@ export default function Resultados() {
   const [progress, setProgress] = useState(0);
   const [players, setPlayers] = useState<Player[]>([]);
   const [timeline, setTimeline] = useState<TL[]>([]);
+  const [nomeVideo, setNomeVideo] = useState<string>("");
   const [baixando, setBaixando] = useState<"csv" | "pdf" | null>(null);
 
   // Baixa CSV/PDF com autenticação (o endpoint exige o token JWT).
@@ -50,6 +51,7 @@ export default function Resultados() {
         if (!ativo) return;
         setStatus(job.status);
         setProgress(job.progress);
+        if (job.options?.filename) setNomeVideo(job.options.filename.replace(/\.[^.]+$/, ""));
         if (job.status === "done") {
           const r = await analytics.result(id);
           setPlayers(r.players || []);
@@ -90,7 +92,10 @@ export default function Resultados() {
       <AppBar />
       <div className="px-4 py-5 max-w-[760px] mx-auto w-full">
         <div className="flex items-center justify-between flex-wrap gap-2.5 mb-4">
-          <h1 className="text-fg text-base font-medium">Resultados</h1>
+          <div className="min-w-0">
+            <h1 className="text-fg text-base font-medium truncate">{nomeVideo || "Resultados"}</h1>
+            <div className="text-[11px] text-grnl">rastreado ✓</div>
+          </div>
           <div className="flex gap-2">
             <button onClick={() => baixar("csv")} disabled={baixando !== null}
               className="btn-ghost text-[13px] px-3.5 py-2 inline-flex items-center gap-1.5 disabled:opacity-50">
