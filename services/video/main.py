@@ -13,6 +13,7 @@ Repare que o video-service NÃO importa o código do worker — ele só manda um
 serviços: cada um evolui independente, contanto que respeitem o nome da task.
 """
 
+import json
 import os
 import uuid
 
@@ -70,8 +71,10 @@ async def health():
 @app.post("/api/videos/upload", response_model=UploadResponse)
 async def upload_video(
     file: UploadFile = File(...),
-    mode: str = Form("velocidade"),   # "velocidade" (rápido) ou "qualidade"
-    area: str = Form("regiao"),       # "regiao" (marcar no vídeo) ou "oficial"
+    mode: str = Form("velocidade"),        # "velocidade" (rápido) ou "qualidade"
+    area: str = Form("regiao"),            # "regiao" (marcar no vídeo) ou "oficial"
+    field_type: str = Form(None),          # "futebol" | "futsal" | "society" (campo oficial)
+    field_points: str = Form(None),        # JSON: [[x,y],...] 4 cantos do campo (px)
     user_id: int = Depends(usuario_atual),
     db: AsyncSession = Depends(get_db),
 ):
@@ -99,15 +102,28 @@ async def upload_video(
     except OSError as exc:
         raise HTTPException(status_code=500, detail=f"Falha ao salvar o vídeo: {exc}")
 
-    # 3) Cria o job no banco (status inicial 'pending').
-    job = Job(user_id=user_id, status="pending", progress=0, video_path=caminho)
+    # 3) Metadados/opções. Guardamos mode/area/filename NO job (para o
+    #    histórico do perfil); os pontos do campo vão apenas para o worker.
+    meta = {"mode": mode, "area": area, "filename": file.filename}
+    if area == "oficial" and field_type:
+        meta["field_type"] = field_type
+    opcoes_task = dict(meta)
+    if field_points:
+        try:
+            pts = json.loads(field_points)
+            if isinstance(pts, list) and len(pts) == 4:
+                opcoes_task["field_points"] = pts
+        except (json.JSONDecodeError, TypeError):
+            pass  # marcação inválida é ignorada (cai no fallback)
+
+    # 4) Cria o job no banco (status inicial 'pending').
+    job = Job(user_id=user_id, status="pending", progress=0, video_path=caminho, options=meta)
     db.add(job)
     await db.commit()
     await db.refresh(job)
 
-    # 4) Enfileira o processamento (o worker pega esta mensagem no Redis).
-    opcoes = {"mode": mode, "area": area}
-    celery_app.send_task("process_video", args=[str(job.id), caminho, opcoes])
+    # 5) Enfileira o processamento (o worker pega esta mensagem no Redis).
+    celery_app.send_task("process_video", args=[str(job.id), caminho, opcoes_task])
 
     return UploadResponse(
         job_id=job.id, status=job.status, message="Vídeo recebido e na fila de processamento."
