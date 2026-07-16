@@ -11,6 +11,8 @@ Assim o mesmo código roda local e em produção, sem duplicação.
 
 import logging
 import os
+import subprocess
+import tempfile
 from typing import Callable, Dict, List, Optional, Tuple
 
 import cv2
@@ -34,27 +36,82 @@ logger = logging.getLogger(__name__)
 # Teto físico de velocidade (km/h) — descarta saltos residuais.
 TETO_KMH = 40.0
 
+# Dimensões oficiais (comprimento x largura, em metros) por tipo de campo.
+# Usadas quando o usuário escolhe "Campo oficial" (sem marcar a região).
+FIELD_SIZES = {
+    "futebol": (105.0, 68.0),
+    "futsal": (40.0, 20.0),
+    "society": (50.0, 30.0),
+}
 
-def _ler_video(caminho: str) -> Tuple[float, list]:
-    """Lê todos os frames de um vídeo para memória.
+
+def _normalizar_cfr(caminho: str, fps: int = 25) -> str:
+    """Reescreve o vídeo em frame rate CONSTANTE (CFR) para leitura confiável.
+
+    Vídeos VFR (frame rate variável — ex.: 59.94 nominal / 23.66 real) fazem o
+    OpenCV ler um número NÃO-determinístico de frames sob pressão de memória,
+    truncando o resultado (o vídeo de saída sai mais curto que o original).
+    Normalizar para CFR com o ffmpeg resolve: a leitura passa a ser completa e
+    determinística. A resolução é preservada (não reescalona), então pontos de
+    calibração marcados em pixels continuam válidos.
 
     Returns:
-        (fps, lista_de_frames).
+        Caminho do arquivo normalizado (temporário). Se o ffmpeg falhar,
+        devolve o caminho ORIGINAL (melhor processar VFR do que nada).
+    """
+    try:
+        tmp = tempfile.NamedTemporaryFile(suffix=".mp4", delete=False)
+        tmp.close()
+        cmd = [
+            "ffmpeg", "-y", "-loglevel", "error",
+            "-i", caminho,
+            "-vsync", "cfr", "-r", str(fps),
+            "-c:v", "libx264", "-preset", "veryfast", "-an",
+            tmp.name,
+        ]
+        subprocess.run(cmd, check=True, capture_output=True)
+        logger.info("Vídeo normalizado para CFR %dfps: %s", fps, tmp.name)
+        return tmp.name
+    except Exception as exc:
+        logger.warning("Falha ao normalizar CFR (%s) — usando o vídeo original.", exc)
+        return caminho
+
+
+def _meta_video(caminho: str) -> Tuple[float, int, int, int]:
+    """Lê apenas os METADADOS do vídeo (sem carregar frames na memória).
+
+    Returns:
+        (fps, largura, altura, n_frames).
     """
     cap = cv2.VideoCapture(caminho)
     if not cap.isOpened():
         raise IOError(f"Não foi possível abrir o vídeo: {caminho}")
     fps = cap.get(cv2.CAP_PROP_FPS) or 25.0
-    frames = []
+    largura = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
+    altura = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
+    n = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
+    cap.release()
+    return (fps if fps > 0 else 25.0), largura, altura, n
+
+
+def _iter_frames(caminho: str):
+    """Gera os frames do vídeo UM A UM (streaming), sem acumular na memória.
+
+    Essencial para não estourar a RAM: um vídeo 1080p de 16s tem ~400 frames
+    de ~6 MB cada (~2,5 GB se carregados juntos, o que matava o worker por
+    falta de memória — SIGKILL). Em streaming, só um frame fica na RAM por vez.
+    """
+    cap = cv2.VideoCapture(caminho)
+    if not cap.isOpened():
+        raise IOError(f"Não foi possível abrir o vídeo: {caminho}")
     try:
         while True:
             ok, fr = cap.read()
             if not ok:
                 break
-            frames.append(fr)
+            yield fr
     finally:
         cap.release()
-    return (fps if fps > 0 else 25.0), frames
 
 
 def processar_video(
@@ -95,21 +152,30 @@ def processar_video(
             except Exception:  # progresso nunca pode derrubar o processamento
                 logger.warning("Falha ao reportar progresso.", exc_info=True)
 
-    # --- Leitura do vídeo ---
-    fps, frames = _ler_video(video_path)
-    if not frames:
+    # --- Normalização CFR + metadados (processamento em STREAMING) ---
+    # Normaliza para frame rate constante (evita truncar vídeos VFR) e lê só os
+    # METADADOS. Os frames são lidos um a um (streaming) nas etapas seguintes,
+    # para não estourar a RAM — carregar todos de uma vez matava o worker (OOM).
+    video_norm = _normalizar_cfr(video_path)
+    fps, largura, altura, n = _meta_video(video_norm)
+    if n <= 0:  # alguns contêineres não reportam a contagem; conta em streaming
+        n = sum(1 for _ in _iter_frames(video_norm))
+    if n <= 0:
         raise ValueError("Vídeo sem frames legíveis.")
-    n = len(frames)
-    altura, largura = frames[0].shape[:2]
     dt = 1.0 / fps
-    logger.info("Processando %d frames (%dx%d @ %.2ffps).", n, largura, altura, fps)
+    logger.info("Processando %d frames (%dx%d @ %.2ffps) em streaming.", n, largura, altura, fps)
     _progresso(2)
 
     # --- Calibração do classificador de time (primeiros frames) ---
     detector = YOLODetector()
     classifier = TeamClassifier(k=int(options.get("team_k", os.getenv("TEAM_K", "3"))))
     crops = []
-    for fr in frames[:10]:
+    primeiro_frame = None
+    for idx, fr in enumerate(_iter_frames(video_norm)):
+        if idx == 0:
+            primeiro_frame = fr.copy()  # guardado para a compensação de câmera
+        if idx >= 10:
+            break
         for det in detector.detect(fr):
             if det.class_name == "person":
                 x1, y1, x2, y2 = det.bbox
@@ -119,17 +185,40 @@ def processar_video(
     classifier.fit(crops)
     _progresso(5)
 
-    # --- Homografia (calibrada se houver arquivo, senão fallback) ---
-    mapper = HomographyMapper()
+    # --- Homografia (arquivo salvo > pontos marcados pelo usuário > fallback) ---
+    # Dimensões do campo: "Campo oficial" define o tipo (futebol/futsal/society);
+    # caso contrário, assume um campo de futebol padrão (105x68 m).
+    field_size = FIELD_SIZES.get(options.get("field_type", ""), (105.0, 68.0))
+    mapper = HomographyMapper(field_size=field_size)
     mapper.set_frame_size(largura, altura)
     nome = os.path.splitext(os.path.basename(video_path))[0]
     cal = os.path.join(os.getenv("MODELS_DIR", "data/models"), f"calibration_{nome}.json")
-    calibrado = os.path.exists(cal) and mapper.load_calibration(cal)
+    calibrado_arquivo = os.path.exists(cal) and mapper.load_calibration(cal)
 
-    # Compensação de câmera (ligada quando não há calibração de câmera fixa).
-    comp = None if calibrado else CameraMotionCompensator()
-    if comp is not None:
-        comp.reset(frames[0])
+    # Calibração interativa: 4 cantos do campo marcados no 1º frame (px do vídeo).
+    # Mapeamos para o retângulo do campo em metros; distâncias/velocidades são
+    # invariantes à orientação, então basta uma correspondência consistente.
+    calibrado_marcado = False
+    pontos_img = options.get("field_points")
+    if not calibrado_arquivo and isinstance(pontos_img, list) and len(pontos_img) == 4:
+        cantos_campo = [
+            (0.0, 0.0),
+            (mapper.field_length, 0.0),
+            (mapper.field_length, mapper.field_width),
+            (0.0, mapper.field_width),
+        ]
+        try:
+            pts = [(float(p[0]), float(p[1])) for p in pontos_img]
+            calibrado_marcado = mapper.set_keypoints(pts, cantos_campo)
+        except (TypeError, ValueError, IndexError):
+            logger.warning("field_points inválidos — usando fallback de escala.")
+
+    # Compensação de câmera: mantida quando NÃO há calibração de câmera fixa em
+    # arquivo. Com a marcação no 1º frame, a compensação mapeia todos os frames
+    # de volta a esse frame de referência (onde a homografia foi definida).
+    comp = None if calibrado_arquivo else CameraMotionCompensator()
+    if comp is not None and primeiro_frame is not None:
+        comp.reset(primeiro_frame)
 
     # --- Passo 1: rastreamento de todos os frames ---
     use_reid = bool(options.get("use_reid", os.getenv("USE_REID", "0") == "1"))
@@ -138,7 +227,9 @@ def processar_video(
     pos_por_id: Dict[int, list] = {}
     team_por_id: Dict[int, str] = {}
 
-    for i, fr in enumerate(frames):
+    for i, fr in enumerate(_iter_frames(video_norm)):
+        if i >= n:  # segurança: não ultrapassa o tamanho pré-alocado das séries
+            break
         tracks = tracker.update(fr, team_classifier=classifier)
         frames_tracks.append(tracks)
         if comp is not None:
@@ -202,9 +293,11 @@ def processar_video(
         speed_por_id[pid] = speeds
     _progresso(88)
 
-    # --- Passo 3: renderizar o vídeo anotado ---
+    # --- Passo 3: renderizar o vídeo anotado (streaming) ---
     with AnnotatedVideoWriter(output_path, fps, (largura, altura)) as writer:
-        for i, fr in enumerate(frames):
+        for i, fr in enumerate(_iter_frames(video_norm)):
+            if i >= len(frames_tracks):
+                break
             anotacoes = []
             for t in frames_tracks[i]:
                 final = id_map.get(t.id)
@@ -218,6 +311,13 @@ def processar_video(
             writer.write_frame(fr, anotacoes, timestamp=i / fps)
             if i % 30 == 0:
                 _progresso(88 + int(11 * i / max(1, n)))
+
+    # Renderização concluída: remove o vídeo normalizado temporário.
+    if video_norm != video_path and os.path.exists(video_norm):
+        try:
+            os.remove(video_norm)
+        except OSError:
+            pass
 
     # --- Monta o resultado estruturado ---
     players = []
