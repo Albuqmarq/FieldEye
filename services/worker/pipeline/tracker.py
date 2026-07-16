@@ -70,6 +70,7 @@ class PlayerTracker:
         match_thresh: float = 0.7,
         reid_threshold: float = 0.6,
         confidence: float = None,
+        imgsz: int = None,
     ):
         """Inicializa o rastreador.
 
@@ -92,7 +93,7 @@ class PlayerTracker:
         # Mesmas variáveis de ambiente do detector, para usar o mesmo modelo.
         model_name = model_name or os.getenv("MODEL_NAME", "yolov8n.pt")
         self.confidence = confidence if confidence is not None else float(os.getenv("YOLO_CONF", "0.3"))
-        self.imgsz = int(os.getenv("YOLO_IMGSZ", "0"))
+        self.imgsz = imgsz if imgsz is not None else int(os.getenv("YOLO_IMGSZ", "0"))
 
         # Carrega o modelo YOLO (reutiliza o peso baixado na Fase 2).
         os.makedirs(MODELS_DIR, exist_ok=True)

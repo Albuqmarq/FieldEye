@@ -16,6 +16,7 @@ import tempfile
 from typing import Callable, Dict, List, Optional, Tuple
 
 import cv2
+import numpy as np
 
 from pipeline.detector import YOLODetector
 from pipeline.team_classifier import TeamClassifier
@@ -43,6 +44,30 @@ FIELD_SIZES = {
     "futsal": (40.0, 20.0),
     "society": (50.0, 30.0),
 }
+
+
+def _preset_modo(mode: str) -> dict:
+    """Escolhe modelo/resolução/confiança do YOLO conforme o modo de análise.
+
+    - "velocidade": modelo nano em baixa resolução — rápido, roda em qualquer
+      CPU, mas perde jogadores pequenos/distantes.
+    - "qualidade": modelo maior e resolução alta — detecta jogadores pequenos
+      (câmera alta/tática), ao custo de bem mais tempo e memória (ideal com GPU).
+
+    Todos os valores podem ser sobrescritos por variáveis de ambiente, para
+    ajustar ao hardware sem tocar no código.
+    """
+    if mode == "qualidade":
+        return {
+            "model": os.getenv("MODEL_NAME_HQ", "yolov8s.pt"),
+            "imgsz": int(os.getenv("YOLO_IMGSZ_HQ", "1280")),
+            "conf": float(os.getenv("YOLO_CONF_HQ", "0.2")),
+        }
+    return {
+        "model": os.getenv("MODEL_NAME", "yolov8n.pt"),
+        "imgsz": int(os.getenv("YOLO_IMGSZ", "0")) or 640,
+        "conf": float(os.getenv("YOLO_CONF", "0.3")),
+    }
 
 
 def _normalizar_cfr(caminho: str, fps: int = 25) -> str:
@@ -167,7 +192,11 @@ def processar_video(
     _progresso(2)
 
     # --- Calibração do classificador de time (primeiros frames) ---
-    detector = YOLODetector()
+    # Modo de análise (velocidade/qualidade) define modelo, resolução e confiança.
+    preset = _preset_modo(options.get("mode", "velocidade"))
+    logger.info("Modo '%s': modelo=%s imgsz=%d conf=%.2f",
+                options.get("mode", "velocidade"), preset["model"], preset["imgsz"], preset["conf"])
+    detector = YOLODetector(model_name=preset["model"], confidence=preset["conf"], imgsz=preset["imgsz"])
     classifier = TeamClassifier(k=int(options.get("team_k", os.getenv("TEAM_K", "3"))))
     crops = []
     primeiro_frame = None
@@ -213,6 +242,18 @@ def processar_video(
         except (TypeError, ValueError, IndexError):
             logger.warning("field_points inválidos — usando fallback de escala.")
 
+    # Filtro de região: quando o usuário marca os 4 cantos, só analisamos quem
+    # está DENTRO desse polígono (descarta torcida, banco de reservas e qualquer
+    # pessoa fora da área marcada — o que sujava a análise).
+    roi_poligono = None
+    if options.get("area") == "regiao" and isinstance(pontos_img, list) and len(pontos_img) == 4:
+        try:
+            roi_poligono = np.array(
+                [[float(p[0]), float(p[1])] for p in pontos_img], dtype=np.float32
+            )
+        except (TypeError, ValueError, IndexError):
+            roi_poligono = None
+
     # Compensação de câmera: mantida quando NÃO há calibração de câmera fixa em
     # arquivo. Com a marcação no 1º frame, a compensação mapeia todos os frames
     # de volta a esse frame de referência (onde a homografia foi definida).
@@ -222,7 +263,10 @@ def processar_video(
 
     # --- Passo 1: rastreamento de todos os frames ---
     use_reid = bool(options.get("use_reid", os.getenv("USE_REID", "0") == "1"))
-    tracker = PlayerTracker(use_reid=use_reid)
+    tracker = PlayerTracker(
+        use_reid=use_reid, model_name=preset["model"],
+        confidence=preset["conf"], imgsz=preset["imgsz"],
+    )
     frames_tracks: List[list] = []
     pos_por_id: Dict[int, list] = {}
     team_por_id: Dict[int, str] = {}
@@ -235,11 +279,16 @@ def processar_video(
         if comp is not None:
             comp.update(fr, exclude_boxes=[t.bbox for t in tracks])
         for t in tracks:
-            team_por_id[t.id] = t.team
             x1, y1, x2, y2 = t.bbox
             pe_x, pe_y = (x1 + x2) / 2.0, float(y2)
             if comp is not None:
                 pe_x, pe_y = comp.transform_point(pe_x, pe_y)
+            # Fora da área marcada? Ignora este jogador neste frame.
+            if roi_poligono is not None and cv2.pointPolygonTest(
+                roi_poligono, (float(pe_x), float(pe_y)), False
+            ) < 0:
+                continue
+            team_por_id[t.id] = t.team
             pos_por_id.setdefault(t.id, [None] * n)[i] = mapper.pixel_to_meters(pe_x, pe_y)
 
         # Rastreamento ocupa a maior parte do tempo: progresso de 5% a 80%.

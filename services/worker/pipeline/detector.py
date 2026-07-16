@@ -7,6 +7,7 @@ devolve uma lista de detecções (caixas delimitadoras) de pessoas e bola.
 
 import logging
 import os
+import shutil
 from dataclasses import dataclass
 from typing import List
 
@@ -106,7 +107,9 @@ class YOLODetector:
         """
         try:
             if os.path.exists(model_name) and not os.path.exists(destino):
-                os.replace(model_name, destino)
+                # shutil.move (e não os.replace) para funcionar entre discos
+                # diferentes: os dados ficam em D: e o /app no disco do container.
+                shutil.move(model_name, destino)
                 logger.info("Peso do modelo movido para %s", destino)
         except OSError as exc:
             # Não é fatal: o modelo já está em memória e funciona mesmo assim.
