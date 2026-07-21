@@ -19,6 +19,10 @@ WORKDIR /app
 # Instala as dependências ANTES de copiar o código: assim, se só o código
 # mudar, o Docker reaproveita a camada de dependências (build mais rápido).
 COPY requirements.txt .
+# PyTorch com suporte a CUDA (GPU NVIDIA). Instalado ANTES do requirements para
+# que o ultralytics use esta versão (com GPU) e não a CPU-only padrão do PyPI.
+# A GPU é passada ao contêiner pelo docker-compose (deploy.resources.devices).
+RUN pip install --no-cache-dir torch torchvision --index-url https://download.pytorch.org/whl/cu121
 RUN pip install --no-cache-dir -r requirements.txt
 
 # Copia o código do worker (pipeline/, tasks.py, etc.).
