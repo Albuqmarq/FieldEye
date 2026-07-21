@@ -1,7 +1,7 @@
 """
 models.py — Modelo ORM de usuário (auth-service).
 
-⚠️ Segurança: guardamos apenas o `password_hash` (a senha embaralhada por
+Segurança: guardamos apenas o `password_hash` (a senha embaralhada por
 bcrypt), NUNCA a senha em texto puro. Se o banco vazar, ninguém recupera as
 senhas originais.
 """
