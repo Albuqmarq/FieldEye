@@ -66,7 +66,7 @@ class PlayerTracker:
         self,
         use_reid: bool = False,
         model_name: str = None,
-        track_buffer: int = 45,
+        track_buffer: int = 90,
         match_thresh: float = 0.7,
         reid_threshold: float = 0.6,
         confidence: float = None,
@@ -137,9 +137,9 @@ class PlayerTracker:
         # appearance_thresh do ultralytics corresponde ao nosso reid_threshold.
         conteudo = (
             "tracker_type: botsort\n"
-            "track_high_thresh: 0.25\n"
+            "track_high_thresh: 0.3\n"
             "track_low_thresh: 0.1\n"
-            "new_track_thresh: 0.25\n"
+            "new_track_thresh: 0.35\n"
             f"track_buffer: {self.track_buffer}\n"
             f"match_thresh: {self.match_thresh}\n"
             "fuse_score: True\n"

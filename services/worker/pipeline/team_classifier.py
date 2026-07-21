@@ -7,6 +7,7 @@ predominante do uniforme com K-means (k=3): dois times + goleiro.
 """
 
 import logging
+import os
 from typing import List, Optional
 
 import cv2
@@ -37,8 +38,13 @@ class TeamClassifier:
         self.k = k
         # Centros dos clusters (cores médias), preenchidos no fit().
         self.centers: Optional[np.ndarray] = None
-        # Mapa {índice_do_cluster: rótulo} definido após a calibração.
-        self.cluster_to_label: dict = {}
+        # Centros de cor dos DOIS times (A e B) e a distância entre eles.
+        self.team_centers: Optional[np.ndarray] = None
+        self.d_teams: float = 0.0
+        # Razão para marcar "outro": só vira "outro" quem está longe dos dois
+        # times em relação à distância entre eles. Valor alto = conservador
+        # (assume time por padrão, evitando marcar jogador comum como "outro").
+        self.outro_ratio: float = float(os.getenv("TEAM_OUTLIER_RATIO", "0.9"))
         # Indica se o modelo já foi calibrado.
         self.is_fitted: bool = False
 
@@ -136,20 +142,21 @@ class TeamClassifier:
         # Conta quantas amostras caíram em cada cluster.
         contagem = np.bincount(labels, minlength=self.k)
 
-        # Os DOIS grupos MAIS populosos são os times (cada time tem ~10-11
-        # jogadores em campo). Todos os demais — goleiros, juízes e ruído —
-        # viram "outro". Antes o "menor grupo" virava goleiro, o que rotulava
-        # juiz como goleiro e inflava essa categoria.
+        # Os DOIS grupos MAIS populosos definem as cores dos times A e B (cada
+        # time tem ~10-11 jogadores). Na classificação, cada jogador é atribuído
+        # ao time de cor mais próxima; só quem está claramente longe dos DOIS
+        # (juiz/goleiro de cor distinta) vira "outro".
         ordem = np.argsort(contagem)[::-1]  # do maior para o menor
-        self.cluster_to_label = {int(ordem[0]): "A", int(ordem[1]): "B"}
-        for cluster in ordem[2:]:
-            self.cluster_to_label[int(cluster)] = "outro"
+        ca = centers[int(ordem[0])].astype(np.float32)
+        cb = centers[int(ordem[1])].astype(np.float32)
+        self.team_centers = np.stack([ca, cb])
+        self.d_teams = float(np.linalg.norm(ca - cb))
 
         self.is_fitted = True
         logger.info(
-            "TeamClassifier calibrado com %d amostras. Mapa de clusters: %s",
+            "TeamClassifier calibrado com %d amostras (distância entre times=%.1f).",
             len(cores),
-            self.cluster_to_label,
+            self.d_teams,
         )
 
     def classify(self, crop: np.ndarray) -> str:
@@ -161,7 +168,7 @@ class TeamClassifier:
         Returns:
             "A", "B", "goalkeeper" ou "unknown" se não calibrado/sem cor.
         """
-        if not self.is_fitted or self.centers is None:
+        if not self.is_fitted or self.team_centers is None:
             # Sem calibração não há como atribuir time.
             return "unknown"
 
@@ -169,9 +176,12 @@ class TeamClassifier:
         if cor is None:
             return "unknown"
 
-        # Distância euclidiana da cor até cada centro de cluster.
-        distancias = np.linalg.norm(self.centers - cor.astype(np.float32), axis=1)
-        cluster = int(np.argmin(distancias))
+        # Distância da cor a cada centro de TIME (A e B).
+        dists = np.linalg.norm(self.team_centers - cor.astype(np.float32), axis=1)
+        proximo = int(np.argmin(dists))
 
-        # Traduz o índice do cluster para o rótulo de time.
-        return self.cluster_to_label.get(cluster, "unknown")
+        # Só vira "outro" quem está claramente longe dos dois times (relativo à
+        # distância entre eles). Caso contrário, assume o time mais próximo.
+        if self.d_teams > 1e-6 and float(dists[proximo]) > self.outro_ratio * self.d_teams:
+            return "outro"
+        return "A" if proximo == 0 else "B"
