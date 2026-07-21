@@ -94,11 +94,11 @@ export const analytics = {
   result: (id: string) => req(`/api/analytics/${id}`),
   players: (id: string) => req(`/api/analytics/${id}/players`),
   timeline: (id: string) => req(`/api/analytics/${id}/timeline`),
-  // Junta dois jogadores (mesma pessoa com IDs diferentes) em um só.
-  merge: (id: string, keep_id: number, merge_id: number) =>
+  // Junta vários jogadores (mesma pessoa com IDs diferentes) em um só.
+  merge: (id: string, keep_id: number, merge_ids: number[]) =>
     req(`/api/analytics/${id}/merge`, {
       method: "POST",
-      body: JSON.stringify({ keep_id, merge_id }),
+      body: JSON.stringify({ keep_id, merge_ids }),
     }),
   heatmap: (id: string, playerId: number) =>
     req(`/api/analytics/${id}/heatmap/${playerId}`),

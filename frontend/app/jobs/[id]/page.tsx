@@ -43,19 +43,23 @@ export default function Resultados() {
     analytics.timeline(id).then((t) => setTimeline(t || [])).catch(() => {});
   }
 
-  // Seleciona/desseleciona um jogador (máximo 2) no modo de juntar.
+  // Seleciona/desseleciona um jogador (qualquer quantidade) no modo de juntar.
   function selecionar(pid: number) {
     setSelecionados((sel) =>
-      sel.includes(pid) ? sel.filter((x) => x !== pid) : sel.length >= 2 ? sel : [...sel, pid]
+      sel.includes(pid) ? sel.filter((x) => x !== pid) : [...sel, pid]
     );
   }
 
-  // Junta os dois selecionados: o 1º permanece, o 2º é absorvido.
+  // O jogador que permanece (novo ID unificado) é o MENOR id selecionado.
+  const keepId = selecionados.length ? Math.min(...selecionados) : null;
+
+  // Junta todos os selecionados no menor id.
   async function juntarSelecionados() {
-    if (selecionados.length !== 2) return;
+    if (selecionados.length < 2 || keepId == null) return;
+    const mergeIds = selecionados.filter((x) => x !== keepId);
     setMesclando(true);
     try {
-      await analytics.merge(id, selecionados[0], selecionados[1]);
+      await analytics.merge(id, keepId, mergeIds);
       setSelecionados([]);
       setJuntando(false);
       await recarregar();
@@ -197,12 +201,12 @@ export default function Resultados() {
           </button>
         </div>
 
-        {/* Barra de confirmação (aparece com 2 selecionados) */}
-        {juntando && selecionados.length === 2 && (
+        {/* Barra de confirmação (aparece com 2+ selecionados) */}
+        {juntando && selecionados.length >= 2 && (
           <div className="card p-3 mb-2.5 flex items-center justify-between gap-2 flex-wrap">
             <span className="text-[13px] text-fg">
-              Juntar o jogador #{selecionados[1]} no #{selecionados[0]} — as métricas somam e o
-              #{selecionados[0]} permanece.
+              Juntar {selecionados.length} jogadores — o resultado será o jogador
+              <b className="text-grn"> #{keepId}</b> (as métricas somam).
             </span>
             <button onClick={juntarSelecionados} disabled={mesclando}
               className="btn-primary text-xs px-3 py-1.5 disabled:opacity-50">
@@ -212,10 +216,9 @@ export default function Resultados() {
         )}
 
         <div className="grid gap-2.5" style={{ gridTemplateColumns: "repeat(auto-fit,minmax(150px,1fr))" }}>
-          {players.map((p) => {
+          {[...players].sort((a, b) => a.player_id - b.player_id).map((p) => {
             const c = cor(p.team);
-            const idx = selecionados.indexOf(p.player_id);
-            const sel = idx >= 0;
+            const sel = selecionados.includes(p.player_id);
             return (
               <div key={p.player_id}
                 onClick={juntando ? () => selecionar(p.player_id) : undefined}
@@ -224,7 +227,7 @@ export default function Resultados() {
                 <div className="flex items-center gap-2 mb-2">
                   <span className="w-[30px] h-[30px] rounded-full inline-flex items-center justify-center text-white text-xs" style={{ background: "#374151" }}>{p.player_id}</span>
                   <span className="text-[11px] px-2 py-0.5 rounded-full" style={{ background: c.bg, color: c.fg }}>{c.label}</span>
-                  {sel && <span className="text-[10px] text-grn ml-auto font-medium">{idx === 0 ? "manter" : "juntar"}</span>}
+                  {sel && <span className="text-[10px] text-grn ml-auto font-medium">{p.player_id === keepId ? "novo" : "juntar"}</span>}
                 </div>
                 <Row k="Vel. máx" v={`${(p.max_speed || 0).toFixed(0)} km/h`} />
                 <Row k="Vel. méd" v={`${(p.avg_speed || 0).toFixed(0)} km/h`} />
