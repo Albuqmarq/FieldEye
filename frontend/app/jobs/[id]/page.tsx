@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useParams } from "next/navigation";
 import { FileSpreadsheet, FileText } from "lucide-react";
 import AppBar from "@/components/AppBar";
@@ -19,6 +19,7 @@ const cor = (t: string) =>
   t === "A" ? { bg: "#3a1414", fg: "#fca5a5", label: "Time A" }
   : t === "B" ? { bg: "#14213a", fg: "#93c5fd", label: "Time B" }
   : t === "goalkeeper" ? { bg: "#3a2c0a", fg: "#fde68a", label: "Goleiro" }
+  : t === "outro" ? { bg: "#1f1f1f", fg: "#9ca3af", label: "Outro (goleiro/juiz)" }
   : { bg: "#1f1f1f", fg: "#9ca3af", label: t };
 
 export default function Resultados() {
@@ -29,6 +30,15 @@ export default function Resultados() {
   const [timeline, setTimeline] = useState<TL[]>([]);
   const [nomeVideo, setNomeVideo] = useState<string>("");
   const [baixando, setBaixando] = useState<"csv" | "pdf" | null>(null);
+  const [eta, setEta] = useState<number | null>(null); // segundos restantes estimados
+  const baseEta = useRef<{ t: number; p: number } | null>(null);
+
+  // Etapa atual (texto) a partir da faixa de progresso (bate com o worker).
+  const etapa = (p: number) =>
+    p < 5 ? "Preparando o vídeo"
+    : p < 80 ? "Detectando e rastreando jogadores"
+    : p < 88 ? "Calculando velocidades e distâncias"
+    : "Renderizando o vídeo anotado";
 
   // Baixa CSV/PDF com autenticação (o endpoint exige o token JWT).
   async function baixar(kind: "csv" | "pdf") {
@@ -52,6 +62,15 @@ export default function Resultados() {
         setStatus(job.status);
         setProgress(job.progress);
         if (job.options?.filename) setNomeVideo(job.options.filename.replace(/\.[^.]+$/, ""));
+        // Estima o tempo restante pela velocidade do progresso desde a 1ª leitura.
+        if (job.status === "processing" && job.progress > 0 && job.progress < 100) {
+          if (!baseEta.current) baseEta.current = { t: Date.now(), p: job.progress };
+          else {
+            const dt = (Date.now() - baseEta.current.t) / 1000;
+            const dp = job.progress - baseEta.current.p;
+            if (dp > 0 && dt > 1) setEta(Math.max(0, Math.round((dt / dp) * (100 - job.progress))));
+          }
+        }
         if (job.status === "done") {
           const r = await analytics.result(id);
           setPlayers(r.players || []);
@@ -71,12 +90,17 @@ export default function Resultados() {
       <>
         <AppBar />
         <div className="flex-1 flex flex-col items-center justify-center px-6 text-center">
-          <div className="text-fg text-lg font-medium mb-2">Processando seu vídeo…</div>
-          <p className="text-mut text-sm mb-5">Isto pode levar alguns minutos.</p>
+          <div className="text-fg text-lg font-medium mb-2">Processando {nomeVideo || "seu vídeo"}…</div>
+          <p className="text-mut text-sm mb-5">{status === "failed" ? "Falhou" : etapa(progress)}</p>
           <div className="w-[260px] h-2 rounded bg-line overflow-hidden">
             <div className="h-full bg-grn transition-all" style={{ width: `${progress}%` }} />
           </div>
-          <div className="text-mut text-xs mt-2">{progress}%</div>
+          <div className="text-mut text-xs mt-2">
+            {progress}%
+            {eta != null && status === "processing"
+              ? ` · ~${eta >= 60 ? Math.ceil(eta / 60) + " min" : eta + " s"} restantes`
+              : ""}
+          </div>
           {status === "failed" && <p className="text-red-400 text-sm mt-4">A análise falhou. Tente novamente.</p>}
         </div>
       </>
