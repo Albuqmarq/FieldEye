@@ -1,15 +1,15 @@
--- ===================================================================
+
 -- init.sql — estrutura inicial do banco FieldEye.
 -- Executado automaticamente pelo contêiner do Postgres na PRIMEIRA subida
 -- (arquivos em /docker-entrypoint-initdb.d/ rodam uma vez, no banco vazio).
--- ===================================================================
+
 
 -- Extensão para gerar UUIDs (usada na tabela de jobs).
 CREATE EXTENSION IF NOT EXISTS "pgcrypto";
 
--- -------------------------------------------------------------------
+
 -- usuários: quem faz login e envia vídeos.
--- -------------------------------------------------------------------
+
 CREATE TABLE IF NOT EXISTS users (
     id            SERIAL PRIMARY KEY,
     email         VARCHAR(255) UNIQUE NOT NULL,   -- login (único)
@@ -18,10 +18,10 @@ CREATE TABLE IF NOT EXISTS users (
     created_at    TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 
--- -------------------------------------------------------------------
+
 -- jobs: cada análise de vídeo solicitada.
 -- O video-service cria o job; o worker atualiza status/progress.
--- -------------------------------------------------------------------
+
 CREATE TABLE IF NOT EXISTS jobs (
     id            UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     user_id       INTEGER REFERENCES users(id) ON DELETE CASCADE,
@@ -38,10 +38,10 @@ CREATE TABLE IF NOT EXISTS jobs (
 -- Índice para listar rapidamente os jobs de um usuário.
 CREATE INDEX IF NOT EXISTS idx_jobs_user_id ON jobs(user_id);
 
--- -------------------------------------------------------------------
+
 -- player_tracks: resultado AGREGADO por jogador em um job.
 -- (uma linha por jogador rastreado)
--- -------------------------------------------------------------------
+
 CREATE TABLE IF NOT EXISTS player_tracks (
     id             SERIAL PRIMARY KEY,
     job_id         UUID REFERENCES jobs(id) ON DELETE CASCADE,
@@ -56,10 +56,10 @@ CREATE TABLE IF NOT EXISTS player_tracks (
 
 CREATE INDEX IF NOT EXISTS idx_player_tracks_job_id ON player_tracks(job_id);
 
--- -------------------------------------------------------------------
+
 -- frame_data: dados FRAME A FRAME (granular).
 -- Permite reconstruir gráficos de velocidade ao longo do tempo.
--- -------------------------------------------------------------------
+
 CREATE TABLE IF NOT EXISTS frame_data (
     id            BIGSERIAL PRIMARY KEY,
     job_id        UUID REFERENCES jobs(id) ON DELETE CASCADE,
