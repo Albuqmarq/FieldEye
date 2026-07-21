@@ -32,6 +32,39 @@ export default function Resultados() {
   const [baixando, setBaixando] = useState<"csv" | "pdf" | null>(null);
   const [eta, setEta] = useState<number | null>(null); // segundos restantes estimados
   const baseEta = useRef<{ t: number; p: number } | null>(null);
+  const [juntando, setJuntando] = useState(false); // modo de juntar jogadores
+  const [selecionados, setSelecionados] = useState<number[]>([]);
+  const [mesclando, setMesclando] = useState(false);
+
+  // Recarrega os resultados (após juntar jogadores).
+  async function recarregar() {
+    const r = await analytics.result(id);
+    setPlayers(r.players || []);
+    analytics.timeline(id).then((t) => setTimeline(t || [])).catch(() => {});
+  }
+
+  // Seleciona/desseleciona um jogador (máximo 2) no modo de juntar.
+  function selecionar(pid: number) {
+    setSelecionados((sel) =>
+      sel.includes(pid) ? sel.filter((x) => x !== pid) : sel.length >= 2 ? sel : [...sel, pid]
+    );
+  }
+
+  // Junta os dois selecionados: o 1º permanece, o 2º é absorvido.
+  async function juntarSelecionados() {
+    if (selecionados.length !== 2) return;
+    setMesclando(true);
+    try {
+      await analytics.merge(id, selecionados[0], selecionados[1]);
+      setSelecionados([]);
+      setJuntando(false);
+      await recarregar();
+    } catch (e) {
+      alert(e instanceof Error ? e.message : "Falha ao juntar os jogadores.");
+    } finally {
+      setMesclando(false);
+    }
+  }
 
   // Etapa atual (texto) a partir da faixa de progresso (bate com o worker).
   const etapa = (p: number) =>
@@ -147,18 +180,51 @@ export default function Resultados() {
         {timeline.length > 0 && <SpeedChart timeline={timeline} players={players} />}
 
         {/* Cards por jogador */}
-        <div className="mt-4 mb-2.5">
-          <div className="text-[13px] text-fg font-medium">Jogadores</div>
-          <div className="text-[11px] text-mut">O número é o ID de rastreio (não o número da camisa) e a cor indica o time detectado.</div>
+        <div className="mt-4 mb-2.5 flex items-start justify-between gap-2 flex-wrap">
+          <div className="min-w-0">
+            <div className="text-[13px] text-fg font-medium">Jogadores</div>
+            <div className="text-[11px] text-mut">
+              {juntando
+                ? "A mesma pessoa apareceu com dois números? Clique nos dois cards para juntá-los em um só."
+                : "O número é o ID de rastreio (não a camisa) e a cor indica o time detectado."}
+            </div>
+          </div>
+          <button
+            onClick={() => { setJuntando((v) => !v); setSelecionados([]); }}
+            className="btn-ghost text-[12px] px-3 py-1.5 shrink-0"
+          >
+            {juntando ? "Cancelar" : "Juntar jogadores"}
+          </button>
         </div>
+
+        {/* Barra de confirmação (aparece com 2 selecionados) */}
+        {juntando && selecionados.length === 2 && (
+          <div className="card p-3 mb-2.5 flex items-center justify-between gap-2 flex-wrap">
+            <span className="text-[13px] text-fg">
+              Juntar o jogador #{selecionados[1]} no #{selecionados[0]} — as métricas somam e o
+              #{selecionados[0]} permanece.
+            </span>
+            <button onClick={juntarSelecionados} disabled={mesclando}
+              className="btn-primary text-xs px-3 py-1.5 disabled:opacity-50">
+              {mesclando ? "Juntando…" : "Confirmar"}
+            </button>
+          </div>
+        )}
+
         <div className="grid gap-2.5" style={{ gridTemplateColumns: "repeat(auto-fit,minmax(150px,1fr))" }}>
           {players.map((p) => {
             const c = cor(p.team);
+            const idx = selecionados.indexOf(p.player_id);
+            const sel = idx >= 0;
             return (
-              <div key={p.player_id} className="card card-hover p-3.5">
+              <div key={p.player_id}
+                onClick={juntando ? () => selecionar(p.player_id) : undefined}
+                className={`card p-3.5 ${juntando ? "cursor-pointer" : "card-hover"}`}
+                style={sel ? { borderColor: "#34a05f", borderWidth: 2 } : undefined}>
                 <div className="flex items-center gap-2 mb-2">
                   <span className="w-[30px] h-[30px] rounded-full inline-flex items-center justify-center text-white text-xs" style={{ background: "#374151" }}>{p.player_id}</span>
                   <span className="text-[11px] px-2 py-0.5 rounded-full" style={{ background: c.bg, color: c.fg }}>{c.label}</span>
+                  {sel && <span className="text-[10px] text-grn ml-auto font-medium">{idx === 0 ? "manter" : "juntar"}</span>}
                 </div>
                 <Row k="Vel. máx" v={`${(p.max_speed || 0).toFixed(0)} km/h`} />
                 <Row k="Vel. méd" v={`${(p.avg_speed || 0).toFixed(0)} km/h`} />

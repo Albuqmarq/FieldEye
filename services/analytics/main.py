@@ -17,7 +17,8 @@ from fastapi import Depends, FastAPI, HTTPException, status
 from fastapi.responses import StreamingResponse
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from jose import JWTError, jwt
-from sqlalchemy import select
+from pydantic import BaseModel
+from sqlalchemy import delete, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from database import get_db
@@ -131,6 +132,75 @@ async def timeline(
             TimelinePoint(frame=fd.frame_number, timestamp=fd.timestamp, speed=fd.speed)
         )
     return [PlayerTimeline(player_id=pid, points=pts) for pid, pts in por_jogador.items()]
+
+
+class MergeRequest(BaseModel):
+    """Corpo do pedido para juntar dois jogadores (mesma pessoa, IDs diferentes)."""
+
+    keep_id: int    # ID que permanece
+    merge_id: int   # ID absorvido pelo keep_id
+
+
+@app.post("/api/analytics/{job_id}/merge")
+async def juntar_jogadores(
+    job_id: str,
+    req: MergeRequest,
+    user_id: int = Depends(usuario_atual),
+    db: AsyncSession = Depends(get_db),
+):
+    """Funde dois jogadores em um só (quando o rastreio trocou o ID da mesma
+    pessoa). Reatribui os dados do merge_id ao keep_id, recalcula as métricas
+    agregadas e remove o registro absorvido."""
+    await _job_do_usuario(job_id, user_id, db)
+    if req.keep_id == req.merge_id:
+        raise HTTPException(status_code=400, detail="Escolha dois jogadores diferentes.")
+
+    res = await db.execute(
+        select(PlayerTrack).where(
+            PlayerTrack.job_id == job_id,
+            PlayerTrack.player_id.in_([req.keep_id, req.merge_id]),
+        )
+    )
+    linhas = {p.player_id: p for p in res.scalars().all()}
+    keep = linhas.get(req.keep_id)
+    merge = linhas.get(req.merge_id)
+    if keep is None or merge is None:
+        raise HTTPException(status_code=404, detail="Jogador não encontrado neste job.")
+
+    # Recalcula as métricas do jogador que permanece. Distância é a soma dos dois
+    # trechos (não há salto falso entre eles); velocidade média é ponderada.
+    nk = len(keep.trajectory or [])
+    nm = len(merge.trajectory or [])
+    total = (nk + nm) or 1
+    keep.trajectory = sorted(
+        (keep.trajectory or []) + (merge.trajectory or []),
+        key=lambda p: p.get("frame", 0),
+    )
+    keep.total_distance = round((keep.total_distance or 0) + (merge.total_distance or 0), 1)
+    keep.max_speed = round(max(keep.max_speed or 0, merge.max_speed or 0), 1)
+    keep.avg_speed = round(((keep.avg_speed or 0) * nk + (merge.avg_speed or 0) * nm) / total, 1)
+
+    # Evita duplicar frames no gráfico: remove do merge os frames que o keep já
+    # tem e reatribui o restante ao keep.
+    frames_keep = select(FrameData.frame_number).where(
+        FrameData.job_id == job_id, FrameData.player_id == req.keep_id
+    )
+    await db.execute(
+        delete(FrameData).where(
+            FrameData.job_id == job_id,
+            FrameData.player_id == req.merge_id,
+            FrameData.frame_number.in_(frames_keep),
+        )
+    )
+    await db.execute(
+        update(FrameData)
+        .where(FrameData.job_id == job_id, FrameData.player_id == req.merge_id)
+        .values(player_id=req.keep_id)
+    )
+
+    await db.delete(merge)
+    await db.commit()
+    return {"ok": True, "player_id": req.keep_id}
 
 
 @app.get("/api/analytics/{job_id}/export/csv")

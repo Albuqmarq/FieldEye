@@ -66,6 +66,7 @@ export type UploadOpts = {
   mode?: string;
   area?: string;
   fieldType?: string; // "futebol" | "futsal" | "society" (campo oficial)
+  device?: string; // "gpu" | "cpu"
   fieldPoints?: { x: number; y: number }[]; // cantos do campo (px do vídeo)
 };
 
@@ -76,6 +77,7 @@ export const videos = {
     if (opts.mode) form.append("mode", opts.mode);
     if (opts.area) form.append("area", opts.area);
     if (opts.fieldType) form.append("field_type", opts.fieldType);
+    if (opts.device) form.append("device", opts.device);
     // Os pontos vão como JSON; o backend converte para a homografia.
     if (opts.fieldPoints && opts.fieldPoints.length === 4) {
       form.append("field_points", JSON.stringify(opts.fieldPoints.map((p) => [p.x, p.y])));
@@ -92,6 +94,12 @@ export const analytics = {
   result: (id: string) => req(`/api/analytics/${id}`),
   players: (id: string) => req(`/api/analytics/${id}/players`),
   timeline: (id: string) => req(`/api/analytics/${id}/timeline`),
+  // Junta dois jogadores (mesma pessoa com IDs diferentes) em um só.
+  merge: (id: string, keep_id: number, merge_id: number) =>
+    req(`/api/analytics/${id}/merge`, {
+      method: "POST",
+      body: JSON.stringify({ keep_id, merge_id }),
+    }),
   heatmap: (id: string, playerId: number) =>
     req(`/api/analytics/${id}/heatmap/${playerId}`),
   // Download de CSV/PDF. Os endpoints exigem o token JWT, então NÃO dá para
