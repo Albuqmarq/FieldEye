@@ -1,0 +1,19 @@
+# ===================================================================
+# Override OPCIONAL para acelerar o worker com GPU NVIDIA (CUDA).
+#
+# Use apenas se a máquina tiver uma GPU NVIDIA com drivers instalados:
+#   docker compose -f docker-compose.yml -f docker-compose.gpu.yml up --build
+#
+# Sem este arquivo, o worker roda em CPU e funciona em qualquer máquina.
+# A aceleração por GPU do PyTorch é exclusiva de placas NVIDIA (CUDA); GPUs
+# AMD/Intel não são aceleradas e usam a CPU.
+# ===================================================================
+services:
+  worker:
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu]

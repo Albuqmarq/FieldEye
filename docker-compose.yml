@@ -166,13 +166,9 @@ services:
       - fieldeye
     deploy:
       replicas: 1   # 1 worker por vez (processamento de vídeo é pesado em RAM)
-      resources:
-        reservations:
-          devices:
-            # Passa a GPU NVIDIA (CUDA) para o worker acelerar o YOLO.
-            - driver: nvidia
-              count: all
-              capabilities: [gpu]
+      # A GPU NVIDIA é OPCIONAL: para habilitá-la, suba com o override
+      # docker-compose.gpu.yml (ver README). Sem ele, o worker roda em CPU e
+      # funciona em qualquer máquina.
 
   # ----------------------------------------------------------------
   # FRONTEND — site em Next.js  [código na Fase 10]
