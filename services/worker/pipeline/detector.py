@@ -49,7 +49,7 @@ class YOLODetector:
     ultralytics o baixa automaticamente na primeira execução.
     """
 
-    def __init__(self, model_name: str = None, confidence: float = None, imgsz: int = None):
+    def __init__(self, model_name: str = None, confidence: float = None, imgsz: int = None, device: str = None):
         """Inicializa o detector.
 
         Todos os parâmetros podem ser sobrescritos por variáveis de ambiente,
@@ -67,6 +67,8 @@ class YOLODetector:
         model_name = model_name or os.getenv("MODEL_NAME", "yolov8n.pt")
         self.confidence = confidence if confidence is not None else float(os.getenv("YOLO_CONF", "0.3"))
         self.imgsz = imgsz if imgsz is not None else int(os.getenv("YOLO_IMGSZ", "0"))
+        # Dispositivo de inferência: "cuda:0" (GPU), "cpu" ou None (automático).
+        self.device = device
 
         # Garante que o diretório de modelos exista antes de baixar o peso.
         os.makedirs(MODELS_DIR, exist_ok=True)
@@ -135,6 +137,8 @@ class YOLODetector:
             kwargs = {"conf": self.confidence, "verbose": False}
             if self.imgsz and self.imgsz > 0:
                 kwargs["imgsz"] = self.imgsz
+            if self.device:
+                kwargs["device"] = self.device
             resultados = self.model(frame, **kwargs)
         except Exception as exc:
             logger.exception("Erro durante a inferência do YOLO: %s", exc)

@@ -71,6 +71,7 @@ class PlayerTracker:
         reid_threshold: float = 0.6,
         confidence: float = None,
         imgsz: int = None,
+        device: str = None,
     ):
         """Inicializa o rastreador.
 
@@ -94,6 +95,7 @@ class PlayerTracker:
         model_name = model_name or os.getenv("MODEL_NAME", "yolov8n.pt")
         self.confidence = confidence if confidence is not None else float(os.getenv("YOLO_CONF", "0.3"))
         self.imgsz = imgsz if imgsz is not None else int(os.getenv("YOLO_IMGSZ", "0"))
+        self.device = device  # "cuda:0" (GPU), "cpu" ou None (automático)
 
         # Carrega o modelo YOLO (reutiliza o peso baixado na Fase 2).
         os.makedirs(MODELS_DIR, exist_ok=True)
@@ -215,6 +217,8 @@ class PlayerTracker:
             }
             if self.imgsz and self.imgsz > 0:
                 kwargs["imgsz"] = self.imgsz
+            if self.device:
+                kwargs["device"] = self.device
             resultados = self.model.track(frame, **kwargs)
         except Exception as exc:
             logger.exception("Erro durante o rastreamento BoT-SORT: %s", exc)

@@ -70,6 +70,28 @@ def _preset_modo(mode: str) -> dict:
     }
 
 
+def _resolver_device(pedido) -> Optional[str]:
+    """Resolve o dispositivo de inferência a partir da escolha do usuário.
+
+    - "gpu"/"cuda": usa a GPU se houver CUDA (NVIDIA) disponível; senão, CPU.
+    - "cpu": força CPU.
+    - vazio/None: deixa o YOLO escolher (GPU se disponível, senão CPU).
+    """
+    p = str(pedido or "").lower()
+    if p == "cpu":
+        return "cpu"
+    if p in ("gpu", "cuda"):
+        try:
+            import torch
+            if torch.cuda.is_available():
+                return "cuda:0"
+        except Exception:
+            pass
+        logger.warning("GPU solicitada, mas CUDA indisponível — usando CPU.")
+        return "cpu"
+    return None  # automático (o YOLO decide)
+
+
 def _normalizar_cfr(caminho: str, fps: int = 25) -> str:
     """Reescreve o vídeo em frame rate CONSTANTE (CFR) para leitura confiável.
 
@@ -194,9 +216,12 @@ def processar_video(
     # --- Calibração do classificador de time (primeiros frames) ---
     # Modo de análise (velocidade/qualidade) define modelo, resolução e confiança.
     preset = _preset_modo(options.get("mode", "velocidade"))
-    logger.info("Modo '%s': modelo=%s imgsz=%d conf=%.2f",
-                options.get("mode", "velocidade"), preset["model"], preset["imgsz"], preset["conf"])
-    detector = YOLODetector(model_name=preset["model"], confidence=preset["conf"], imgsz=preset["imgsz"])
+    device = _resolver_device(options.get("device"))
+    logger.info("Modo '%s': modelo=%s imgsz=%d conf=%.2f device=%s",
+                options.get("mode", "velocidade"), preset["model"], preset["imgsz"],
+                preset["conf"], device or "auto")
+    detector = YOLODetector(model_name=preset["model"], confidence=preset["conf"],
+                            imgsz=preset["imgsz"], device=device)
     classifier = TeamClassifier(k=int(options.get("team_k", os.getenv("TEAM_K", "4"))))
     crops = []
     primeiro_frame = None
@@ -265,7 +290,7 @@ def processar_video(
     use_reid = bool(options.get("use_reid", os.getenv("USE_REID", "0") == "1"))
     tracker = PlayerTracker(
         use_reid=use_reid, model_name=preset["model"],
-        confidence=preset["conf"], imgsz=preset["imgsz"],
+        confidence=preset["conf"], imgsz=preset["imgsz"], device=device,
     )
     frames_tracks: List[list] = []
     pos_por_id: Dict[int, list] = {}

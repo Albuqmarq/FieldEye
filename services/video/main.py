@@ -74,6 +74,7 @@ async def upload_video(
     mode: str = Form("velocidade"),        # "velocidade" (rápido) ou "qualidade"
     area: str = Form("regiao"),            # "regiao" (marcar no vídeo) ou "oficial"
     field_type: str = Form(None),          # "futebol" | "futsal" | "society" (campo oficial)
+    device: str = Form(None),              # "gpu" | "cpu" (dispositivo de inferência)
     field_points: str = Form(None),        # JSON: [[x,y],...] 4 cantos do campo (px)
     user_id: int = Depends(usuario_atual),
     db: AsyncSession = Depends(get_db),
@@ -107,6 +108,8 @@ async def upload_video(
     meta = {"mode": mode, "area": area, "filename": file.filename}
     if area == "oficial" and field_type:
         meta["field_type"] = field_type
+    if device:
+        meta["device"] = device
     opcoes_task = dict(meta)
     if field_points:
         try:

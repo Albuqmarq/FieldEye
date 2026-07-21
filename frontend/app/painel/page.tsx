@@ -23,6 +23,7 @@ export default function Painel() {
   const [time, setTime] = useState("Meu time");
   const [jobs, setJobs] = useState<Job[]>([]);
   const [modo, setModo] = useState<"velocidade" | "qualidade">("velocidade");
+  const [device, setDevice] = useState<"gpu" | "cpu">("gpu");
   const [area, setArea] = useState<"regiao" | "oficial">("regiao");
   const [tipoCampo, setTipoCampo] = useState<"futebol" | "futsal" | "society">("futebol");
   const [arquivo, setArquivo] = useState<File | null>(null);
@@ -61,7 +62,9 @@ export default function Painel() {
       // Só envia os pontos do campo quando o modo de área é "marcar região".
       const fieldPoints = area === "regiao" && pontos ? pontos : undefined;
       const fieldType = area === "oficial" ? tipoCampo : undefined;
-      await videos.upload(arquivo, { mode: modo, area, fieldType, fieldPoints });
+      // A escolha de GPU/CPU só se aplica ao modo Qualidade (o pesado).
+      const dev = modo === "qualidade" ? device : undefined;
+      await videos.upload(arquivo, { mode: modo, area, fieldType, device: dev, fieldPoints });
       setArquivo(null);
       setPontos(null);
       await carregarJobs();
@@ -118,6 +121,29 @@ export default function Painel() {
             icon={Gem} titulo="Qualidade"
             desc="Detecta até jogadores pequenos e distantes. Mais lento — recomendado com GPU e câmera tática." />
         </div>
+
+        {/* Processamento (GPU x CPU) — só faz diferença no modo Qualidade */}
+        {modo === "qualidade" && (
+          <div className="card p-3.5 mb-6">
+            <div className="text-[13px] text-fg font-medium mb-1">Processamento</div>
+            <p className="text-xs text-mut mb-3">
+              A GPU (NVIDIA/CUDA) é bem mais rápida. Sem uma GPU NVIDIA, use CPU —
+              funciona em qualquer máquina, porém mais devagar.
+            </p>
+            <div className="flex gap-2">
+              <button onClick={() => setDevice("gpu")}
+                className="flex-1 text-[13px] py-2 rounded-lg border-2 transition-colors"
+                style={{ borderColor: device === "gpu" ? "#34a05f" : "#2a2d33", color: device === "gpu" ? "#f5f5f5" : "#9ca3af" }}>
+                GPU (NVIDIA / CUDA)
+              </button>
+              <button onClick={() => setDevice("cpu")}
+                className="flex-1 text-[13px] py-2 rounded-lg border-2 transition-colors"
+                style={{ borderColor: device === "cpu" ? "#34a05f" : "#2a2d33", color: device === "cpu" ? "#f5f5f5" : "#9ca3af" }}>
+                CPU
+              </button>
+            </div>
+          </div>
+        )}
 
         {/* Área de análise */}
         <div className="text-[13px] text-fg font-medium mb-1">Área de análise</div>
