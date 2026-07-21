@@ -2,7 +2,7 @@
 
 O FieldEye transforma o vídeo de um jogo ou treino em dados de desempenho. Você
 envia a gravação e recebe de volta o mesmo vídeo com cada jogador rastreado,
-junto com a velocidade e a distância que cada um percorreu — tudo a partir de
+junto com a velocidade e a distância que cada um percorreu, tudo a partir de
 uma câmera comum, sem GPS, coletes ou equipamento caro.
 
 Por baixo, o sistema encontra e acompanha todos os jogadores em campo, separa os
