@@ -27,7 +27,7 @@ from schemas import LoginIn, RegisterIn, TokenOut, UserOut, UserUpdate
 
 app = FastAPI(title="FieldEye — Auth Service")
 
-# --- Configurações ---
+# Configurações
 JWT_SECRET = os.getenv("JWT_SECRET", "dev-secret")
 JWT_ALG = os.getenv("JWT_ALGORITHM", "HS256")
 ACCESS_MIN = int(os.getenv("ACCESS_TOKEN_EXPIRE_MINUTES", "1440"))   # 24h
@@ -38,9 +38,7 @@ pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
 bearer = HTTPBearer()
 
 
-# ----------------------------------------------------------------------
 # Funções auxiliares
-# ----------------------------------------------------------------------
 def _hash_senha(senha: str) -> str:
     """Gera o hash bcrypt da senha (com salt aleatório embutido)."""
     return pwd_context.hash(senha)
@@ -86,9 +84,7 @@ async def usuario_atual(
     return user
 
 
-# ----------------------------------------------------------------------
 # Endpoints
-# ----------------------------------------------------------------------
 @app.get("/api/auth/health")
 async def health():
     """Endpoint de saúde."""

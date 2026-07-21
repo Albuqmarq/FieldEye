@@ -1,17 +1,4 @@
-"""
-main.py — Video Service (FastAPI): upload de vídeos e gestão de jobs.
-
-Responsabilidades:
-  - receber o upload, validar e salvar o arquivo;
-  - criar o job no banco;
-  - ENFILEIRAR o processamento no Celery (o worker pega depois);
-  - listar/consultar/deletar jobs do usuário autenticado.
-
-Comunicação com o worker: usamos `celery_app.send_task("process_video", ...)`.
-Repare que o video-service NÃO importa o código do worker — ele só manda uma
-"mensagem" pela fila (Redis) dizendo "processem este job". Isso DESACOPLA os
-serviços: cada um evolui independente, contanto que respeitem o nome da task.
-"""
+"""Video Service: upload de vídeos, criação de jobs e envio para a fila."""
 
 import json
 import os
@@ -30,7 +17,7 @@ from schemas import JobOut, UploadResponse
 
 app = FastAPI(title="FieldEye — Video Service")
 
-# --- Configurações de ambiente ---
+# Configurações de ambiente
 UPLOADS_DIR = os.getenv("UPLOADS_DIR", "/data/uploads")
 JWT_SECRET = os.getenv("JWT_SECRET", "dev-secret")
 JWT_ALG = os.getenv("JWT_ALGORITHM", "HS256")
@@ -47,12 +34,7 @@ bearer = HTTPBearer()
 
 
 async def usuario_atual(creds: HTTPAuthorizationCredentials = Depends(bearer)) -> int:
-    """Valida o JWT e devolve o ID do usuário (campo 'sub' do token).
-
-    Cada serviço valida o token SOZINHO (com o JWT_SECRET compartilhado), sem
-    precisar chamar o auth-service a cada requisição. Isso é o poder do JWT:
-    autenticação 'stateless' (sem estado), rápida e escalável.
-    """
+    """Valida o JWT e devolve o ID do usuário."""
     try:
         payload = jwt.decode(creds.credentials, JWT_SECRET, algorithms=[JWT_ALG])
         return int(payload["sub"])

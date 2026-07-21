@@ -279,7 +279,7 @@ def testar_fisica(frames, classifier: TeamClassifier, fps: float):
         # Velocidade instantânea de cada jogador neste frame (km/h).
         logger.info("Frame %d | velocidades(km/h): %s", i, "  ".join(linha))
 
-    # ----- Resumo por jogador ao final -----
+    # Resumo por jogador ao final
     logger.info("---------- RESUMO POR JOGADOR ----------")
     for pid in sorted(posicoes.keys()):
         dist = physics.calculate_total_distance(posicoes[pid])
@@ -349,7 +349,7 @@ def testar_pipeline_completo(caminho: str, n_frames: int = 300):
     n = len(frames)
     logger.info("%d frames (%dx%d @ %.2ffps).", n, largura, altura, fps)
 
-    # --- Calibração de time (usa os primeiros frames) ---
+    # Calibração de time (usa os primeiros frames)
     detector = YOLODetector()
     # TEAM_K: nº de grupos de cor. 3 p/ futebol (A/B/goleiro); 2 p/ dois
     # corredores com roupas diferentes, etc.
@@ -364,7 +364,7 @@ def testar_pipeline_completo(caminho: str, n_frames: int = 300):
                     crops.append(c)
     classifier.fit(crops)
 
-    # --- Homografia (modo misto: calibrado se houver arquivo, senão fallback) ---
+    # Homografia (modo misto: calibrado se houver arquivo, senão fallback)
     mapper = HomographyMapper()
     mapper.set_frame_size(largura, altura)
     calibrado = _carregar_calibracao(mapper, caminho)
@@ -379,7 +379,7 @@ def testar_pipeline_completo(caminho: str, n_frames: int = 300):
     else:
         logger.info("Compensação de movimento de câmera: DESLIGADA (modo calibrado).")
 
-    # --- Passo 1: rastrear todos os frames, guardando bbox/time/posição ---
+    # Passo 1: rastrear todos os frames, guardando bbox/time/posição
     # USE_REID=1 liga a re-identificação por aparência (melhora oclusões, ex.:
     # duas pessoas se cruzando). Mais pesado, mas mantém os IDs corretos.
     usar_reid = os.getenv("USE_REID", "0") == "1"
@@ -412,7 +412,7 @@ def testar_pipeline_completo(caminho: str, n_frames: int = 300):
 
     logger.info("Rastreamento concluído: %d fragmentos (IDs locais).", len(pos_por_id))
 
-    # --- Passo 1.5: consolidação automática (costura + filtro de ruído) ---
+    # Passo 1.5: consolidação automática (costura + filtro de ruído)
     # Transforma centenas de fragmentos em jogadores reais.
     # Parâmetros ajustáveis por ambiente (sem mexer no código):
     #   CONS_MIN_FRAMES, CONS_MIN_DIST, CONS_MAX_GAP, CONS_MAX_DIST
@@ -447,7 +447,7 @@ def testar_pipeline_completo(caminho: str, n_frames: int = 300):
         pid: sum(1 for p in traj if p is not None) for pid, traj in pos_por_id.items()
     }
 
-    # --- Passo 2: limpar trajetórias (outliers -> interpolar -> suavizar) ---
+    # Passo 2: limpar trajetórias (outliers -> interpolar -> suavizar)
     dt = 1.0 / fps
     speed_por_id = {}  # {id: [v_kmh ou None] por frame}
     total_gaps = 0
@@ -476,7 +476,7 @@ def testar_pipeline_completo(caminho: str, n_frames: int = 300):
         speed_por_id[pid] = speeds
     logger.info("Limpeza concluída (%d gaps tratados no total).", total_gaps)
 
-    # --- Passo 3: renderizar o vídeo anotado ---
+    # Passo 3: renderizar o vídeo anotado
     destino = os.path.join("..", "..", "data", "outputs", "test_output.mp4")
     with AnnotatedVideoWriter(destino, fps, (largura, altura)) as writer:
         for i, fr in enumerate(frames):
@@ -498,7 +498,7 @@ def testar_pipeline_completo(caminho: str, n_frames: int = 300):
                 )
             writer.write_frame(fr, anotacoes, timestamp=i / fps)
 
-    # --- Resumo final: monta estatísticas, imprime tabela e salva CSV ---
+    # Resumo final: monta estatísticas, imprime tabela e salva CSV
     estatisticas = []  # lista de dicts por jogador
     for pid in sorted(pos_por_id.keys()):
         dist = physics.calculate_total_distance(pos_por_id[pid])
@@ -655,7 +655,7 @@ def testar_com_video(caminho: str):
             logger.info("   jogador %d -> time %s", idx, time)
         break
 
-    # ===== FASE 3: rastreamento em 60 frames, com e sem ReID =====
+    # FASE 3: rastreamento em 60 frames, com e sem ReID
     logger.info("==================================================")
     logger.info("FASE 3 — RASTREAMENTO (BoT-SORT) em %d frames", N_FRAMES_TRACK)
     logger.info("==================================================")
@@ -683,7 +683,7 @@ def testar_com_video(caminho: str):
         "Menos 'IDs novos após início' = melhor continuidade (menos trocas de ID)."
     )
 
-    # ===== FASE 4: física (velocidade, distância, sprints, heatmap) =====
+    # FASE 4: física (velocidade, distância, sprints, heatmap)
     fps = obter_fps(caminho)
     testar_fisica(frames, classifier, fps)
 

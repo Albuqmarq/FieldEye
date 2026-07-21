@@ -23,7 +23,7 @@ body {
   color: var(--color-fg);
 }
 
-/* ---- Componentes reutilizáveis ---- */
+/* Componentes reutilizáveis */
 .btn-primary {
   background: var(--color-grn);
   color: #0a1a0f;
@@ -65,7 +65,7 @@ body {
 .input::placeholder { color: #6b7280; }
 .input:focus { outline: none; border-color: var(--color-grn); }
 
-/* ---- Navegação por âncora (rolagem suave + destaque da seção) ---- */
+/* Navegação por âncora (rolagem suave + destaque da seção) */
 html { scroll-behavior: smooth; }
 /* Ao pular para uma seção, deixa uma folga do topo e a destaca por instantes. */
 [id]:target {
@@ -78,7 +78,7 @@ html { scroll-behavior: smooth; }
   100% { box-shadow: inset 0 0 0 2px transparent; }
 }
 
-/* ---- Animações da ilustração do campo ---- */
+/* Animações da ilustração do campo */
 .fe-pulse { animation: fepulse 1.3s ease-in-out infinite; }
 @keyframes fepulse { 0%,100% { opacity: 1; } 50% { opacity: 0.3; } }
 .fe-heat { animation: feheat 2.6s ease-in-out infinite; }

@@ -1,15 +1,4 @@
-"""
-homography.py — Conversão de pixels para metros (homografia).
-
-Etapa 5 do pipeline. A câmera enxerga o campo em PERSPECTIVA: o mesmo
-deslocamento em metros ocupa muitos pixels perto da câmera e poucos pixels
-longe dela. Para medir velocidade/distância reais precisamos converter as
-posições em pixels para coordenadas no campo em metros.
-
-Isso é feito com uma HOMOGRAFIA: uma matriz 3x3 que mapeia o plano da imagem
-para o plano do campo. Calibramos com 4+ pontos de referência conhecidos
-(cantos da área, interseções de linhas) e suas posições reais no campo.
-"""
+"""Conversão de pixels para metros no campo, via homografia."""
 
 import json
 import logging
@@ -126,7 +115,7 @@ class HomographyMapper:
             x_m, y_m = float(transformado[0][0][0]), float(transformado[0][0][1])
             return x_m, y_m
 
-        # ----- FALLBACK: sem homografia calibrada -----
+        # FALLBACK: sem homografia calibrada
         return self._fallback_escala(x, y)
 
     def _fallback_escala(self, x: float, y: float) -> Tuple[float, float]:

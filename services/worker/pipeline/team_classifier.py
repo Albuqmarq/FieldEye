@@ -1,10 +1,4 @@
-"""
-team_classifier.py — Classificação de times por cor de uniforme.
-
-Etapa 3 do pipeline. Depois que o YOLO detecta os jogadores, precisamos
-descobrir a qual time cada um pertence. Fazemos isso agrupando a cor
-predominante do uniforme com K-means (k=3): dois times + goleiro.
-"""
+"""Classificação de times pela cor do uniforme (K-means)."""
 
 import logging
 import os

@@ -1,13 +1,8 @@
-// ============================================================
-// api.ts — cliente central da API do FieldEye.
-// Todas as chamadas passam pelo gateway (NEXT_PUBLIC_API_URL) e enviam
-// o token JWT (guardado no navegador) no cabeçalho Authorization.
-// ============================================================
+// Cliente da API. Toda chamada passa pelo gateway e leva o token JWT.
 
-// URL base do gateway. Em dev/local aponta para o Traefik na porta 80.
 const API = process.env.NEXT_PUBLIC_API_URL || "http://localhost";
 
-// ---- Token de autenticação (guardado no localStorage do navegador) ----
+// Token guardado no localStorage.
 export function getToken(): string | null {
   if (typeof window === "undefined") return null;
   return localStorage.getItem("fieldeye_token");
@@ -46,7 +41,7 @@ async function req(path: string, options: RequestInit = {}) {
   return texto ? JSON.parse(texto) : null;
 }
 
-// ---- Autenticação ----
+// Autenticação
 export const auth = {
   register: (email: string, password: string, team_name?: string) =>
     req("/api/auth/register", {
@@ -61,7 +56,7 @@ export const auth = {
   me: () => req("/api/auth/me"),
 };
 
-// ---- Vídeos / jobs ----
+// Vídeos / jobs
 export type UploadOpts = {
   mode?: string;
   area?: string;
@@ -89,7 +84,7 @@ export const videos = {
   remove: (id: string) => req(`/api/videos/jobs/${id}`, { method: "DELETE" }),
 };
 
-// ---- Resultados / analytics ----
+// Resultados / analytics
 export const analytics = {
   result: (id: string) => req(`/api/analytics/${id}`),
   players: (id: string) => req(`/api/analytics/${id}/players`),

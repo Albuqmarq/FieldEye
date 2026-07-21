@@ -1,14 +1,12 @@
-# ============================================================
 # docker-compose.prod.yml — ajustes de PRODUÇÃO.
 # Use junto do arquivo base:
 #   docker compose -f docker-compose.yml -f docker-compose.prod.yml up -d --build
 #
 # Este arquivo só contém as DIFERENÇAS em relação ao base.
-# ============================================================
 
 services:
 
-  # --- Gateway: sem dashboard aberto em produção ---
+  # Gateway: sem dashboard aberto em produção
   traefik:
     # Não expõe a porta 8080 (dashboard) em produção.
     ports:
@@ -18,7 +16,7 @@ services:
     # e adicionando um resolver de certificados. (Deixado como próximo passo.)
     restart: always
 
-  # --- Banco: senha via Docker secret (mais seguro que variável de ambiente) ---
+  # Banco: senha via Docker secret (mais seguro que variável de ambiente)
   postgres:
     restart: always
     # Exemplo de uso de secret (descomente e crie o secret abaixo):
@@ -41,7 +39,7 @@ services:
   files:
     restart: always
 
-  # --- Worker: suporte a GPU (opcional, exige NVIDIA + Container Toolkit) ---
+  # Worker: suporte a GPU (opcional, exige NVIDIA + Container Toolkit)
   worker:
     restart: always
     # Descomente para habilitar GPU (acelera muito o modo "Qualidade"):

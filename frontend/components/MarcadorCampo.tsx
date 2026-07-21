@@ -1,12 +1,10 @@
 "use client";
 
-// ============================================================
 // MarcadorCampo — calibração interativa da homografia.
 // Extrai o 1º frame do vídeo SELECIONADO (ainda no navegador, sem subir
 // para o servidor) e deixa o usuário clicar nos 4 cantos do campo. Esses
 // pontos (em pixels NATIVOS do vídeo) são enviados no upload e o worker
 // os usa para converter pixels -> metros com precisão (homografia).
-// ============================================================
 
 import { useEffect, useRef, useState } from "react";
 

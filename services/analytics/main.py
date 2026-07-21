@@ -1,13 +1,4 @@
-"""
-main.py — Analytics Service (FastAPI): entrega os resultados das análises.
-
-Este serviço é de LEITURA: ele consulta o que o worker gravou no banco e
-serve para o frontend (cards de jogador, gráficos, heatmap) e exportações
-(CSV e PDF).
-
-Como o video-service, valida o JWT sozinho e checa se o job pertence ao
-usuário antes de devolver qualquer dado.
-"""
+"""Analytics Service: entrega os resultados das análises e as exportações."""
 
 import csv
 import io

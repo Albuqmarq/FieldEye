@@ -1,32 +1,30 @@
-# ===================================================================
 # traefik.yml — configuração ESTÁTICA do Traefik (API Gateway).
 #
 # "Estática" = lida uma vez quando o Traefik sobe. O roteamento de cada
 # serviço (qual URL vai pra onde) é DINÂMICO e fica nos "labels" do
 # docker-compose.yml — assim, ao subir/derrubar um serviço, o Traefik
 # se reconfigura sozinho.
-# ===================================================================
 
-# --- Painel de administração do Traefik ---
+# Painel de administração do Traefik
 api:
   dashboard: true
   insecure: true   # expõe o dashboard em :8080 sem senha. SÓ EM DEV!
 
-# --- Pontos de entrada (portas que o gateway escuta) ---
+# Pontos de entrada (portas que o gateway escuta)
 entryPoints:
   web:
     address: ":80"      # HTTP
   websecure:
     address: ":443"     # HTTPS (TLS configurado em produção)
 
-# --- Provedores (de onde o Traefik descobre os serviços) ---
+# Provedores (de onde o Traefik descobre os serviços)
 providers:
   docker:
     # Conversa com o Docker para descobrir os contêineres automaticamente.
     exposedByDefault: false   # só roteia serviços com traefik.enable=true
     network: fieldeye         # rede interna (nome fixado no docker-compose)
 
-# --- Logs ---
+# Logs
 log:
   level: INFO
 

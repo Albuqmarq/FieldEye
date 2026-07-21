@@ -1,13 +1,4 @@
-"""
-runner.py — Motor reutilizável do pipeline de IA.
-
-Empacota TODO o processamento (detecção -> tracking -> time -> física ->
-consolidação -> vídeo anotado) numa única função `processar_video`, que pode
-ser chamada tanto pelo teste manual quanto pela task Celery (Fase 7).
-
-Boa prática: separar o "motor" (aqui) da "casca" (a task Celery / o teste).
-Assim o mesmo código roda local e em produção, sem duplicação.
-"""
+"""Pipeline de IA: processa o vídeo e devolve as métricas dos jogadores."""
 
 import logging
 import os
@@ -167,29 +158,8 @@ def processar_video(
     options: Optional[dict] = None,
     progress_cb: Optional[Callable[[int], None]] = None,
 ) -> Dict:
-    """Executa o pipeline completo de um vídeo e gera o vídeo anotado.
-
-    Args:
-        video_path: caminho do vídeo de entrada.
-        output_path: caminho do vídeo anotado de saída (.mp4).
-        options: dicionário opcional de ajustes (use_reid, team_k,
-            cons_min_frames, cons_min_dist, cons_max_gap, cons_max_dist).
-        progress_cb: função chamada com o progresso (0..100) ao longo do
-            processamento. Útil para a task Celery atualizar o banco.
-
-    Returns:
-        Dicionário com os resultados:
-            {
-              "fps": float,
-              "n_frames": int,
-              "players": [
-                 {"player_id", "team", "frames", "total_distance",
-                  "max_speed", "avg_speed", "sprints",
-                  "trajectory": [{"frame","x","y","speed"}, ...]},
-                 ...
-              ]
-            }
-    """
+    """Processa o vídeo e devolve {fps, n_frames, players}. O progress_cb
+    recebe o progresso (0..100) para atualizar o banco."""
     options = options or {}
 
     def _progresso(p: int) -> None:
@@ -199,7 +169,7 @@ def processar_video(
             except Exception:  # progresso nunca pode derrubar o processamento
                 logger.warning("Falha ao reportar progresso.", exc_info=True)
 
-    # --- Normalização CFR + metadados (processamento em STREAMING) ---
+    # Normalização CFR + metadados (processamento em STREAMING)
     # Normaliza para frame rate constante (evita truncar vídeos VFR) e lê só os
     # METADADOS. Os frames são lidos um a um (streaming) nas etapas seguintes,
     # para não estourar a RAM — carregar todos de uma vez matava o worker (OOM).
@@ -213,7 +183,7 @@ def processar_video(
     logger.info("Processando %d frames (%dx%d @ %.2ffps) em streaming.", n, largura, altura, fps)
     _progresso(2)
 
-    # --- Calibração do classificador de time (primeiros frames) ---
+    # Calibração do classificador de time (primeiros frames)
     # Modo de análise (velocidade/qualidade) define modelo, resolução e confiança.
     preset = _preset_modo(options.get("mode", "velocidade"))
     device = _resolver_device(options.get("device"))
@@ -239,7 +209,7 @@ def processar_video(
     classifier.fit(crops)
     _progresso(5)
 
-    # --- Homografia (arquivo salvo > pontos marcados pelo usuário > fallback) ---
+    # Homografia (arquivo salvo > pontos marcados pelo usuário > fallback)
     # Dimensões do campo: "Campo oficial" define o tipo (futebol/futsal/society);
     # caso contrário, assume um campo de futebol padrão (105x68 m).
     field_size = FIELD_SIZES.get(options.get("field_type", ""), (105.0, 68.0))
@@ -286,7 +256,7 @@ def processar_video(
     if comp is not None and primeiro_frame is not None:
         comp.reset(primeiro_frame)
 
-    # --- Passo 1: rastreamento de todos os frames ---
+    # Passo 1: rastreamento de todos os frames
     use_reid = bool(options.get("use_reid", os.getenv("USE_REID", "0") == "1"))
     tracker = PlayerTracker(
         use_reid=use_reid, model_name=preset["model"],
@@ -322,7 +292,7 @@ def processar_video(
 
     _progresso(80)
 
-    # --- Passo 1.5: consolidação automática (costura + filtro de ruído) ---
+    # Passo 1.5: consolidação automática (costura + filtro de ruído)
     pos_consolidado, id_map = consolidar(
         pos_por_id, team_por_id, n,
         max_gap_frames=int(options.get("cons_max_gap", os.getenv("CONS_MAX_GAP", "45"))),
@@ -349,7 +319,7 @@ def processar_video(
     team_por_id = team_final
     _progresso(85)
 
-    # --- Passo 2: limpar trajetórias e calcular velocidades ---
+    # Passo 2: limpar trajetórias e calcular velocidades
     speed_por_id: Dict[int, list] = {}
     for pid, traj in pos_por_id.items():
         traj = reject_outliers(traj, dt, max_speed_kmh=TETO_KMH)
@@ -367,7 +337,7 @@ def processar_video(
         speed_por_id[pid] = speeds
     _progresso(88)
 
-    # --- Passo 3: renderizar o vídeo anotado (streaming) ---
+    # Passo 3: renderizar o vídeo anotado (streaming)
     with AnnotatedVideoWriter(output_path, fps, (largura, altura)) as writer:
         for i, fr in enumerate(_iter_frames(video_norm)):
             if i >= len(frames_tracks):
@@ -393,7 +363,7 @@ def processar_video(
         except OSError:
             pass
 
-    # --- Monta o resultado estruturado ---
+    # Monta o resultado estruturado
     players = []
     for pid in sorted(pos_por_id.keys()):
         traj = pos_por_id[pid]

@@ -1,17 +1,4 @@
-"""
-tasks.py — Task Celery do worker (processamento assíncrono de vídeos).
-
-O video-service põe um job na fila (Redis). O Celery, rodando neste worker,
-pega o job e executa `process_video`, que:
-  1. marca o job como "processing" no banco;
-  2. roda o pipeline de IA (pipeline.runner.processar_video);
-  3. atualiza o progresso no banco conforme processa;
-  4. salva os resultados (player_tracks + frame_data) no PostgreSQL;
-  5. em caso de erro, marca o job como "failed" com a mensagem.
-
-Por que assíncrono? Processar vídeo leva segundos/minutos — não dá para
-fazer isso dentro de uma requisição HTTP (o navegador daria timeout).
-"""
+"""Task Celery: pega o job da fila, roda o pipeline e grava os resultados."""
 
 import json
 import logging
@@ -50,9 +37,7 @@ app.conf.update(
 OUTPUTS_DIR = os.getenv("OUTPUTS_DIR", "/data/outputs")
 
 
-# ----------------------------------------------------------------------
 # Pós-processamento de vídeo
-# ----------------------------------------------------------------------
 def _transcodificar_h264(caminho: str) -> None:
     """Reescreve o vídeo em H.264 (yuv420p) para tocar direto no navegador.
 
@@ -86,9 +71,7 @@ def _transcodificar_h264(caminho: str) -> None:
                 pass
 
 
-# ----------------------------------------------------------------------
 # Funções auxiliares de banco de dados
-# ----------------------------------------------------------------------
 def _conectar():
     """Abre uma conexão com o PostgreSQL usando DATABASE_URL."""
     url = os.getenv("DATABASE_URL")
@@ -154,9 +137,7 @@ def _salvar_resultados(conn, job_id, resultado):
     conn.commit()
 
 
-# ----------------------------------------------------------------------
 # Task principal
-# ----------------------------------------------------------------------
 @app.task(bind=True, name="process_video")
 def process_video(self, job_id: str, video_path: str, options: dict = None):
     """Processa um vídeo de ponta a ponta e grava os resultados no banco.

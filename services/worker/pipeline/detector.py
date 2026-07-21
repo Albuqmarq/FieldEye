@@ -1,9 +1,4 @@
-"""
-detector.py — Detecção de jogadores e bola com YOLOv8.
-
-Esta é a primeira etapa do pipeline de IA: recebe um frame (imagem) e
-devolve uma lista de detecções (caixas delimitadoras) de pessoas e bola.
-"""
+"""Detecção de jogadores e bola com YOLOv8."""
 
 import logging
 import os
