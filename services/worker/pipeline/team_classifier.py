@@ -26,11 +26,13 @@ class TeamClassifier:
          tratado como goleiro (normalmente há só 1-2 goleiros em campo).
     """
 
-    def __init__(self, k: int = 3):
+    def __init__(self, k: int = 4):
         """Inicializa o classificador.
 
         Args:
-            k: número de clusters. 3 = Time A, Time B e goleiro.
+            k: número de grupos de cor. Padrão 4: os 2 maiores são os times
+                (A e B) e os demais (goleiros, juízes, ruído) viram "outro".
+                Mais grupos = separação de cor mais fina.
         """
         self.k = k
         # Centros dos clusters (cores médias), preenchidos no fit().
@@ -134,16 +136,14 @@ class TeamClassifier:
         # Conta quantas amostras caíram em cada cluster.
         contagem = np.bincount(labels, minlength=self.k)
 
-        # Heurística: o cluster com MENOS jogadores é o goleiro.
-        # Os outros dois (mais populosos) viram Time A e Time B.
-        ordem = np.argsort(contagem)  # do menor para o maior
-        cluster_goleiro = int(ordem[0])
-        clusters_times = [int(c) for c in ordem[1:]]
-
-        self.cluster_to_label = {cluster_goleiro: "goalkeeper"}
-        rotulos_times = ["A", "B"]
-        for i, cluster in enumerate(clusters_times[:2]):
-            self.cluster_to_label[cluster] = rotulos_times[i]
+        # Os DOIS grupos MAIS populosos são os times (cada time tem ~10-11
+        # jogadores em campo). Todos os demais — goleiros, juízes e ruído —
+        # viram "outro". Antes o "menor grupo" virava goleiro, o que rotulava
+        # juiz como goleiro e inflava essa categoria.
+        ordem = np.argsort(contagem)[::-1]  # do maior para o menor
+        self.cluster_to_label = {int(ordem[0]): "A", int(ordem[1]): "B"}
+        for cluster in ordem[2:]:
+            self.cluster_to_label[int(cluster)] = "outro"
 
         self.is_fitted = True
         logger.info(

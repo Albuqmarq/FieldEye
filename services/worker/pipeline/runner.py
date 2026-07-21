@@ -197,7 +197,7 @@ def processar_video(
     logger.info("Modo '%s': modelo=%s imgsz=%d conf=%.2f",
                 options.get("mode", "velocidade"), preset["model"], preset["imgsz"], preset["conf"])
     detector = YOLODetector(model_name=preset["model"], confidence=preset["conf"], imgsz=preset["imgsz"])
-    classifier = TeamClassifier(k=int(options.get("team_k", os.getenv("TEAM_K", "3"))))
+    classifier = TeamClassifier(k=int(options.get("team_k", os.getenv("TEAM_K", "4"))))
     crops = []
     primeiro_frame = None
     for idx, fr in enumerate(_iter_frames(video_norm)):
