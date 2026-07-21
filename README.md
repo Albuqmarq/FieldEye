@@ -1,27 +1,17 @@
 # FieldEye
 
-Análise de desempenho em futebol a partir de vídeo. O usuário envia a gravação
-de um jogo ou treino e recebe, de volta, o vídeo com cada jogador rastreado,
-métricas de velocidade e distância, e exportação dos dados em CSV e PDF — sem
-GPS, coletes ou câmeras especiais.
+O FieldEye transforma o vídeo de um jogo ou treino em dados de desempenho. Você
+envia a gravação e recebe de volta o mesmo vídeo com cada jogador rastreado,
+junto com a velocidade e a distância que cada um percorreu — tudo a partir de
+uma câmera comum, sem GPS, coletes ou equipamento caro.
 
-Projeto pessoal de portfólio. O código está disponível para leitura e para uso
-próprio (autohospedagem), mas **não é de uso livre** — ver [Licença](#licença).
-
----
-
-## Funcionalidades
-
-- Upload de vídeo (MP4, MOV, AVI, MKV) com autenticação por conta.
-- Detecção e rastreamento de todos os jogadores, com um identificador por atleta.
-- Classificação de time pela cor do uniforme (Time A, Time B e "outros").
-- Cálculo de velocidade máxima/média e distância percorrida por jogador.
-- Calibração de campo interativa: o usuário marca os quatro cantos no próprio
-  vídeo e o sistema converte pixels em metros (homografia), medindo distâncias
-  reais e ignorando quem está fora da área marcada.
-- Vídeo anotado para download, com caixa, ID e velocidade sobre cada jogador.
-- Gráfico de velocidade ao longo do tempo e exportação em CSV e PDF.
-- Perfil com histórico das análises.
+Por baixo, o sistema encontra e acompanha todos os jogadores em campo, separa os
+times pela cor do uniforme e calcula as métricas físicas de cada atleta. Quando
+você marca os quatro cantos do campo no próprio vídeo, ele passa a medir as
+distâncias em metros de verdade e a ignorar quem está fora da área, como a
+torcida e o banco de reservas. No final você tem o vídeo anotado com as caixas e
+as velocidades, um gráfico de velocidade ao longo do tempo, a exportação em CSV
+ou PDF e um histórico das análises no seu perfil.
 
 ## Como funciona
 
@@ -82,6 +72,18 @@ e envie um vídeo. O primeiro processamento também baixa o modelo de detecção
 
 Para parar: `docker compose down` (os dados do banco e os vídeos são preservados).
 
+### Acelerar com GPU NVIDIA (opcional)
+
+Se a máquina tem uma GPU NVIDIA com drivers instalados, suba com o override de
+GPU para o worker usar CUDA (bem mais rápido no modo Qualidade):
+
+```bash
+docker compose -f docker-compose.yml -f docker-compose.gpu.yml up --build
+```
+
+Sem esse override, tudo roda em CPU e funciona em qualquer máquina. A aceleração
+por GPU do PyTorch é exclusiva de placas NVIDIA; GPUs AMD/Intel usam a CPU.
+
 ## Como usar
 
 1. Crie uma conta e faça login.
@@ -100,10 +102,16 @@ Para parar: `docker compose down` (os dados do banco e os vídeos são preservad
 - **Qualidade**: modelo maior (YOLOv8s) em resolução alta. Detecta jogadores
   pequenos e distantes (câmera alta/tática), ao custo de mais tempo e memória.
 
-O worker usa GPU NVIDIA automaticamente quando disponível. Em Docker Desktop com
-WSL2, basta ter os drivers NVIDIA instalados; a passagem da GPU já está
-configurada no `docker-compose.yml`. Sem GPU, o modo Qualidade funciona em CPU,
-porém mais lento.
+No modo Qualidade você escolhe, no próprio site, se o processamento roda na
+**GPU (NVIDIA/CUDA)** ou na **CPU**. A opção de GPU só tem efeito se o projeto
+tiver sido iniciado com o override de GPU (ver acima); em qualquer outro caso, o
+processamento roda em CPU, mais lento porém compatível com qualquer máquina.
+
+### Juntar jogadores
+
+Quando o mesmo jogador recebe dois identificadores diferentes (o rastreamento
+troca o ID depois de uma oclusão longa), a tela de resultados permite
+selecionar os dois cards e juntá-los em um só, somando as métricas.
 
 ## Configuração
 
